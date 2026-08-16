@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  root:
+    name: Root module (test + vet + fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+      - name: go build
+        run: go build ./...
+
+  windows:
+    name: Windows submodule (test + cross-compile)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: go test (stub + with_transport)
+        run: |
+          go test ./...
+          go test -tags with_transport ./...
+
+      - name: go vet (stub + with_transport)
+        run: |
+          go vet ./...
+          go vet -tags with_transport ./...
+
+      - name: Cross-compile windows/amd64
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
+
+  gobind-smoke:
+    name: gobind signature smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: gobind -lang=java chimera/bind
+        run: go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind
