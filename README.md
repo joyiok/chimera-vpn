@@ -12,7 +12,7 @@ CHIMERA 方案的第一步：**不模仿任何已知协议，而是从一颗 256
 
 
 - **Linux 服务端**：`cmd/chimerad`（TUN + UDP 生成协议）
-- **Windows 图形客户端**：`apps/windows`（Wails + Wintun 数据面，路由接管待做）
+- **Windows 图形客户端**：`apps/windows`（Wails + Wintun 数据面 + 默认路由接管）
 - **Android 客户端**：`apps/android`（Kotlin VpnService + gomobile AAR）
 - **iOS 客户端**：`apps/ios`（Swift NEPacketTunnelProvider + gomobile XCFramework）
 - **共享内核**：`core/`（所有平台调用同一个 Go 核心）、`bind/`（gomobile 入口）
@@ -116,23 +116,20 @@ app record s2c  : "payload from the other direction" (round trip OK)
 
 ## 当前边界（重要）
 
-这**不是**生产可用的 VPN，但核心数据面已经可运行：
+这**不是**高风险环境下的生产 VPN，但核心数据面与主要抗探测控件已经可运行：
 
-- 已实现：协议生成、AES-GCM 加密封包、UDP 握手（重传/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接
-- 未实现：Windows 默认路由接管（Wintun 数据面已接）、真机 Android/iOS 构建、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、主动探测诱饵
-- 密码学：只有 AES-GCM 参考实现，ChaCha20-Poly1305 未接入；握手重放窗口、拥塞控制、长期丢包恢复待做
+- 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接、Windows 路由接管、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形
+- 未实现：真机 Android/iOS 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、时序抖动、服务端多 generation 并行
 - `EstimatedEntropyBits` 是生成器自记账的近似值，不是安全证明
 
 ---
 
 ## 下一步（按建议顺序）
 
-1. **Windows 默认路由接管**：0.0.0.0/0 路由到 Chimera0 + 服务器地址例外路由
-2. **真机联调**：Android `gomobile bind` + VpnService；iOS XCFramework + NEPacketTunnelProvider
-3. **丢包恢复**：packet 窗口的 ACK 推进，替代当前 8192 帧固定重排窗口
-4. **探测诱饵**：非法首包触发另一套“良性协议”响应，污染主动探测样本
-5. **车道 B**：密文分片发布到 CDN/直播载体，客户端以拟人行为拉取
-6. **对抗评估**：包长分布、时序、分类器误伤率测量
+1. **真机联调**：Android `protect(fd)` + VpnService；iOS excludedRoutes + NEPacketTunnelProvider
+2. **时序抖动**与服务端 generation 窗口
+3. **车道 B**：密文分片发布到 CDN/直播载体，客户端以拟人行为拉取
+4. **对抗评估**：包长分布、时序、分类器误伤率测量
 
 ## 目录
 
@@ -150,9 +147,9 @@ internal/compiler/    编解码、握手状态机、会话
 | 平台 | 目录 | 状态 |
 |---|---|---|
 | Linux 服务端 | `cmd/chimerad` | 已实现：多客户端 UDP 握手复用 + TUN 桥接；需 root/CAP_NET_ADMIN + NAT 脚本 |
-| Windows GUI | `apps/windows` | Wails GUI + Wintun 包泵已接入；默认路由接管待做 |
-| Android | `apps/android` | 骨架完成：VpnService + gomobile AAR 加载 |
-| iOS | `apps/ios` | 骨架完成：NEPacketTunnelProvider + XCFramework 加载 |
+| Windows GUI | `apps/windows` | Wails GUI + Wintun 包泵 + 默认路由接管 |
+| Android | `apps/android` | VpnService + gomobile AAR；`protect(fd)` 防自环 |
+| iOS | `apps/ios` | NEPacketTunnelProvider + XCFramework；服务器 `/32` 排除路由 |
 
 ## 运行 Linux 服务端
 

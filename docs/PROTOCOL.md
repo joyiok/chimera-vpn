@@ -88,10 +88,16 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 
 ## 6. 抗探测行为（当前实现）
 
-- 所有非法/错 nonce/错步骤的握手数据报：**静默丢弃，不响应**。
-- server-first 模式需要客户端先发一个 32 字节随机 knock；服务器只把来源地址记下。
-- 新会话创建防护：首包 ≥16 字节、同源地址 1s 限速、全局 pending ≤1024。
-- 尚未实现：主动探测诱饵、端口跳跃、时序/包长整形。
+- 所有非法/错 nonce/错步骤的握手数据报：**静默丢弃**；client-first 的未认证首包
+  可改回 decoy 物种的一帧（见下）。
+- server-first 模式需要客户端先发一个 32 字节随机 knock；服务器只把来源地址记下并
+  发送真实首帧（与探针不可分）。
+- 新会话创建防护：首包 ≥16 字节、同源地址 1s 限速、全局 pending ≤1024、
+  已建立会话 `max_sessions`（chimerad 默认 256）。
+- 探测诱饵：`WithDecoy` 对未认证首包回另一种子协议帧；体积不超过探测包的 3 倍且
+  ≤1200 字节，全局 ≤32 帧/秒。`disable_decoy` 关闭。
+- 包长整形：应用记录按 128/512/1024/1452 阶梯垫高（超出末档不垫，避免 UDP 分片）。
+- 尚未实现：端口跳跃、时序抖动、服务端多 generation 并行。
 
 ## 7. 密码学边界
 
@@ -100,4 +106,5 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 握手前字段用 PSK bootstrap 加密；临时 ECDH 提供前向保密。
 - 握手帧有 64 序号重放位图（流模式解码路径）；录制重放的握手帧会被拒绝。
 - `EstimatedEntropyBits` 只是生成器自记账，不是安全证明。
-- 尚未实现：包长/时序整形、密钥轮换（genome generation 自动切换）。
+- 尚未实现：时序抖动、密钥轮换（genome generation 服务端自动切换；客户端
+  `GenerationWindow` 已能探测 gen+1…）。

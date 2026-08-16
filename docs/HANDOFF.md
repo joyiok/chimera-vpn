@@ -49,6 +49,10 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | ChaCha20-Poly1305 | ✅ 完成 | `cipher` 配置强制覆盖；端到端 + 不匹配拒连测试 |
 | 握手重放防护 | ✅ 完成 | 流模式 64 序号位图，录制重放被拒 |
 | NAT keepalive / 空闲回收 / 限速 | ✅ 完成 | `keepalive_sec`/`idle_timeout_sec`/`rate_limit_kbps` 配置 |
+| 连接配额 | ✅ 完成 | `max_sessions`（chimerad 默认 256） |
+| 探测诱饵 | ✅ 完成 | 非法首包回 decoy 物种；限速+体积帽 |
+| 包长整形 | ✅ 完成 | 128/512/1024/1452 阶梯；无 pad 基因型跳过 |
+| Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；待真机 |
 
 ## 接手后先做什么
 
@@ -60,7 +64,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
    - `docs/PROTOCOL.md`（线上格式与密码学）
    - `docs/BUILD.md`（各平台构建）
    - `docs/ROADMAP.md`（下一步与实现提示）
-5. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或 **任务 8：安全加固** 开始；
+5. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或 **任务 8 剩余项（时序抖动 / 服务端 generation 窗口）** 开始；
    若在 Windows 真机旁，先验收路由接管（`route print -4`）。
 
 ## 提交规范

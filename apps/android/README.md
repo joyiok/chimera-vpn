@@ -76,14 +76,16 @@ Go core not built: run ./build-android-core.sh first
   - 路由：`0.0.0.0/0`（捕获并转发设备全部流量）
   - DNS：`1.1.1.1`、`8.8.8.8`
   - MTU：`1400`
-- 建立成功后，`ChimeraVpnService` 调用 Go 绑定 `bind.Bind.start(...)` 启动协议核心，
-  并启动两条协程：
+- 建立成功后，`ChimeraVpnService` 调用 Go 绑定 `bind.Bind.start(...)`，立刻
+  `socketFD` + `VpnService.protect(fd)`，再取分配地址并 `establish()` TUN。
+  同时 `addDisallowedApplication(自身包名)` 作为双保险，避免 UDP 套接字绕进 TUN 自环。
+  然后启动两条协程：
   1. `bind.Receive(handle)` → 写入 TUN 文件描述符（Go 协议栈发往设备的 IP 包）；
   2. TUN 文件描述符读取（单次最多 32767 字节）→ `bind.Send(handle, packet)`（设备发往协议栈的 IP 包）。
 - 断开时先关闭 TUN 文件描述符，再调用 `bind.Bind.stop(handle)`。
 
 ## 注意事项
 
-- 前台服务通知使用了系统占位图标 `android.R.drawable.ic_dialog_info`，后续应替换为应用自有通知图标。
+- 前台服务通知使用 `ic_stat_vpn`；Android 13+ 会请求 `POST_NOTIFICATIONS`。
 - 目标 SDK 为 35；前台服务使用 `specialUse` 类型（Android 14+ 要求）。
 - 本工程在 Go 核心未合并前即可编译；运行时会通过反射加载 `bind.Bind`。

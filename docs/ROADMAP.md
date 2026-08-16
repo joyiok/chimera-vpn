@@ -29,24 +29,26 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 （`PacketTunnel` / `ServerTunnel`），会话状态由 `sessMu` 串行化。
 可选后续：选择性重传（当前为跳过语义，依赖上层协议重传）。
 
-## 4. Android/iOS 真机联调
+## 4. Android/iOS 真机联调（代码已接 protect / 排除路由，待真机验收）
 
 **Android**：
 1. `apps/android/build-android-core.sh` 生成 AAR。
 2. Android Studio 打开工程，连真机。
-3. 验证 `GoBind.start` -> `assignedIP` -> TUN 建立 -> 双泵。
+3. 验证 `GoBind.start` -> `socketFD` + `VpnService.protect` -> `assignedIP` -> TUN。
 4. 已知需检查：前台服务类型在 Android 14+ 的厂商适配；DNS 是否真正生效。
 
 **iOS**：
 1. macOS 上 `build-ios-core.sh` 生成 XCFramework 并链入两个 target。
 2. 配置 App Group + NetworkExtension entitlements。
-3. 验证 `PacketTunnelProvider` 中 `GoBind.assignedIP` 阻塞 10s 内返回。
+3. 验证 `PacketTunnelProvider` 中 `GoBind.assignedIP` 阻塞 10s 内返回；
+   IPv4 服务器地址已加 `/32` excludedRoutes。
 
-## 5. 探测诱饵（anti-probe decoy）
+## 5. ~~探测诱饵（anti-probe decoy）~~（已完成）
 
-- 对非法首包，可选地以“另一种良性协议”的响应应答，污染分类器训练样本。
-- 服务端按源地址限速，避免被用作反射放大。
-- 切入：`internal/tunnel/mux.go` 的 `handleDatagram`。
+**实现**：`internal/tunnel/decoy.go` + `ServerMux.WithDecoy`。非法首包（client-first
+模式 RecvStep 失败）用 `generation XOR 0xC0DEC0DEC0DEC0DE` 生成的第二种协议回一帧；
+源地址 1s 间隙 + 全局 32 帧/秒 + 体积 ≤ min(1200, 3×探测包) 防放大。
+`disable_decoy` 可关。server-first 的 knock 仍发真实首帧（与合法客户端不可分）。
 
 ## 6. 车道 B：CDN/直播广播下行
 
@@ -67,11 +69,12 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 - ~~ChaCha20-Poly1305 接入 `internal/compiler`~~ ✅（`GenerateWithCipher` 强制覆盖 +
   `core.Config.Cipher`；两端一致才可握手）
 - ~~握手重放窗口~~ ✅（流模式 64 序号位图，跳跃判死整段；见 PROTOCOL.md 第 4 节）
-- ~~服务端每会话限速~~ ✅（`WithRateLimit` 令牌桶；连接配额仍缺）
+- ~~服务端每会话限速~~ ✅（`WithRateLimit` 令牌桶；`max_sessions` 默认 256）
 - ~~NAT keepalive + 空闲会话回收~~ ✅（生产存活硬需求：`ControlKeepalive` 0x04、
   `WithIdleTimeout`；客户端 `SetKeepalive`）
-- 包长/时序整形（先做包长分布统计工具）。
-- 密钥轮换协议（genome generation 自动切换）。
+- ~~包长整形~~ ✅（`compiler.DefaultShapeBuckets` 128/512/1024/1452；无 pad_length
+  的基因型跳过；`disable_shape` 可关）。时序抖动仍缺。
+- 密钥轮换协议（客户端 `GenerationWindow` 已探测；服务端仍单 generation）。
 
 ## 9. 多机/分布式部署
 

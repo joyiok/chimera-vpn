@@ -40,6 +40,9 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
   "keepalive_sec": 25,
   "idle_timeout_sec": 180,
   "rate_limit_kbps": 0,
+  "max_sessions": 256,
+  "disable_decoy": false,
+  "disable_shape": false,
   "tun": {"name":"chimera0","address":"10.99.0.1/24","mtu":1400}
 }
 
@@ -48,6 +51,8 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
 # keepalive_sec: 0 = 默认 25s（防 NAT 超时），负数禁用
 # idle_timeout_sec: 空闲会话回收阈值，0 = 不回收
 # rate_limit_kbps: 每客户端入口限速（KiB/s），0 = 不限速
+# max_sessions: 已建立会话上限（默认 256）
+# disable_decoy / disable_shape: 关闭探测诱饵 / 包长整形
 
 # 运行（需 root 或 CAP_NET_ADMIN）
 sudo ./dist/chimerad -config /etc/chimera/server.json
@@ -119,4 +124,5 @@ cd apps/ios
 go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind
 ```
 
-会生成 `Start / AssignedIP / Stop / Send / Receive` 的 Java 签名。
+会生成 `Start / AssignedIP / Stop / Send / Receive / SocketFD` 的 Java 签名。
+Android 必须在 `establish()` 之前对 `SocketFD` 调用 `VpnService.protect`。
