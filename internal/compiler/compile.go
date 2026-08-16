@@ -110,10 +110,8 @@ func validateMessage(spec genome.MessageSpec) error {
 
 func validateMessageReturning(spec genome.MessageSpec) (genome.MessageSpec, error) {
 	// Cipher.
-	switch spec.Cipher {
-	case genome.CipherAES128GCM, genome.CipherAES192GCM, genome.CipherAES256GCM:
-	default:
-		return spec, fmt.Errorf("unsupported cipher %q", spec.Cipher)
+	if err := validateCipher(spec.Cipher); err != nil {
+		return spec, err
 	}
 
 	// Plain fields must all be fixed-size and parsable by ReadFrame.
@@ -194,6 +192,13 @@ func KeyLen(cipherName string) (int, error) {
 		return 24, nil
 	case genome.CipherAES256GCM:
 		return 32, nil
+	case genome.CipherChaCha20P1305:
+		return 32, nil
 	}
 	return 0, fmt.Errorf("unsupported cipher %q", cipherName)
+}
+
+func validateCipher(cipherName string) error {
+	_, err := KeyLen(cipherName)
+	return err
 }

@@ -78,6 +78,18 @@ var patternTable = []patternDef{
 	},
 }
 
+func knownCipher(name string) bool {
+	switch name {
+	case CipherAES128GCM, CipherAES192GCM, CipherAES256GCM, CipherChaCha20P1305:
+		return true
+	}
+	return false
+}
+
+// KnownCipher reports whether name is a cipher the generator accepts as an
+// override (see GenerateWithCipher).
+func KnownCipher(name string) bool { return knownCipher(name) }
+
 type generator struct {
 	r       *drbg.Rand
 	entropy float64
@@ -87,6 +99,19 @@ type generator struct {
 // protocol genome. The same inputs always produce the same design, and a
 // different generation number is a protocol "mutation".
 func Generate(seed []byte, generation uint64) (*ProtocolGenome, error) {
+	return generate(seed, generation, "")
+}
+
+// GenerateWithCipher is Generate with a forced cipher suite (e.g.
+// CipherChaCha20P1305 for clients without AES hardware acceleration).
+// The cipher draw is consumed either way, so every other design choice is
+// bit-identical to Generate for the same (seed, generation); an empty or
+// unknown cipher falls back to the drawn default.
+func GenerateWithCipher(seed []byte, generation uint64, cipher string) (*ProtocolGenome, error) {
+	return generate(seed, generation, cipher)
+}
+
+func generate(seed []byte, generation uint64, forceCipher string) (*ProtocolGenome, error) {
 	seedSum := sha256.Sum256(seed)
 	seedMat := append([]byte("chimera-pgc-v0/seed\x00"), seedSum[:]...)
 
@@ -98,6 +123,12 @@ func Generate(seed []byte, generation uint64) (*ProtocolGenome, error) {
 	ciphers := []string{CipherAES128GCM, CipherAES192GCM, CipherAES256GCM}
 	cipherWeights := []int{2, 1, 5}
 	cipher := ciphers[g.weighted("cipher", cipherWeights)]
+	if forceCipher != "" {
+		if !knownCipher(forceCipher) {
+			return nil, fmt.Errorf("unknown cipher %q", forceCipher)
+		}
+		cipher = forceCipher
+	}
 
 	pat := patternTable[g.weighted("handshake_pattern", []int{3, 3, 3, 1, 1, 1})]
 

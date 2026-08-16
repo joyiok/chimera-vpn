@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 
+	"golang.org/x/crypto/chacha20poly1305"
+
 	"chimera/internal/genome"
 )
 
@@ -38,11 +40,41 @@ type MessageCodec struct {
 	key  []byte
 	aead cipher.AEAD
 	seq  uint64
+	seen seenWindow
 	// packet-mode state: send counter and an anti-replay receive window.
 	packetSend uint64
 	packetBase uint64
 	packetSeen [packetWindowWords]uint64
 	packetMode bool
+}
+
+// seenWindow is a 64-entry anti-replay bitmap over contiguous sequence
+// numbers, used by stream-mode receives (handshake frames): seq numbers
+// below base are dead, [base, base+64) are individually remembered.
+type seenWindow struct {
+	base uint64
+	bits uint64
+}
+
+// observe records seq and reports whether it is fresh. Duplicates and
+// sequences below base are rejected. A jump of 64+ declares the entire
+// skipped run dead (a genuine stream never delivers it again, and treating
+// it as live would reopen a replay window).
+func (w *seenWindow) observe(seq uint64) bool {
+	if seq < w.base {
+		return false
+	}
+	off := seq - w.base
+	if off >= 64 {
+		w.base = seq
+		w.bits = 1
+		return true
+	}
+	if w.bits&(1<<off) != 0 {
+		return false
+	}
+	w.bits |= 1 << off
+	return true
 }
 
 // NewMessageCodec validates a message spec and binds a directional key.
@@ -57,15 +89,26 @@ func NewMessageCodec(spec genome.MessageSpec, key []byte) (*MessageCodec, error)
 	if len(key) != want {
 		return nil, fmt.Errorf("cipher %s needs %d-byte key, got %d", spec.Cipher, want, len(key))
 	}
-	blk, err := aes.NewCipher(key)
+	aead, err := newAEAD(spec.Cipher, key)
 	if err != nil {
 		return nil, fmt.Errorf("cipher %s: %w", spec.Cipher, err)
 	}
-	gcm, err := cipher.NewGCM(blk)
+	c := &MessageCodec{spec: spec, key: key, aead: aead}
+	c.seen.base = 0
+	return c, nil
+}
+
+// newAEAD builds the AEAD primitive named by a cipher identifier. The GCM
+// tag size (16) equals the Poly1305 tag size, so framing is identical.
+func newAEAD(cipherName string, key []byte) (cipher.AEAD, error) {
+	if cipherName == genome.CipherChaCha20P1305 {
+		return chacha20poly1305.New(key)
+	}
+	blk, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	return &MessageCodec{spec: spec, key: key, aead: gcm}, nil
+	return cipher.NewGCM(blk)
 }
 
 // Spec exposes the compiled message layout.
@@ -221,14 +264,26 @@ func (c *MessageCodec) decodeAt(frame []byte, nonce []byte) (*Message, error) {
 	return msg, nil
 }
 
-// Decode strictly decodes frames in order (stream mode).
+// Decode strictly decodes frames in order (stream mode). Sequence numbers
+// diverging more than 63 from the stream position are rejected (a replayed
+// frame from further back cannot be legitimate in this mode).
 func (c *MessageCodec) Decode(frame []byte) (*Message, error) {
-	msg, err := c.decodeAt(frame, c.nonce())
-	if err != nil {
-		return nil, err
+	for probe := c.seq; probe < c.seq+64; probe++ {
+		msg, err := c.decodeAt(frame, c.nonceAt(probe))
+		if err != nil {
+			continue // wrong position: try the next (reordered / replayed frame)
+		}
+		if !c.seen.observe(probe) {
+			return nil, fmt.Errorf("%s: replayed sequence %d", c.spec.Name, probe)
+		}
+		for c.seen.bits&1 != 0 && c.seen.base <= c.seq {
+			c.seen.bits >>= 1
+			c.seen.base++
+			c.seq++
+		}
+		return msg, nil
 	}
-	c.seq++
-	return msg, nil
+	return nil, fmt.Errorf("%s: frame does not authenticate within stream window", c.spec.Name)
 }
 
 // Find returns the first field of the given kind, or nil.

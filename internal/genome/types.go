@@ -66,11 +66,13 @@ const (
 )
 
 // Cipher identifiers used in the spec. The current reference implementation
-// provides AES-GCM variants from the Go standard library.
+// provides AES-GCM variants and ChaCha20-Poly1305 from the Go standard
+// library; ChaCha suits clients without AES hardware acceleration.
 const (
-	CipherAES128GCM = "aes-128-gcm"
-	CipherAES192GCM = "aes-192-gcm"
-	CipherAES256GCM = "aes-256-gcm"
+	CipherAES128GCM     = "aes-128-gcm"
+	CipherAES192GCM     = "aes-192-gcm"
+	CipherAES256GCM     = "aes-256-gcm"
+	CipherChaCha20P1305 = "chacha20-poly1305"
 )
 
 // FieldSpec describes one field in one message.
