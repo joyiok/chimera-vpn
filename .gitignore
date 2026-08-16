@@ -1,0 +1,11 @@
+/dist/
+apps/android/app/libs/*.aar
+apps/android/.gradle/
+apps/android/build/
+apps/ios/ChimeraVPN/build/
+apps/ios/*.xcframework
+apps/windows/build/bin/
+apps/windows/windows-client
+apps/windows/frontend/node_modules/
+*.exe
+*.test

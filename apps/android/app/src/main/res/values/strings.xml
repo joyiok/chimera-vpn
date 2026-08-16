@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chimera VPN</string>
+    <string name="server_hint">服务器地址</string>
+    <string name="seed_hint">Seed（十六进制）</string>
+    <string name="generation_hint">Generation</string>
+    <string name="psk_hint">PSK（十六进制）</string>
+    <string name="tun_ip_hint">本机 TUN 地址（每台设备唯一）</string>
+    <string name="connect">连接</string>
+    <string name="disconnect">断开</string>
+    <string name="status_idle">未连接</string>
+    <string name="status_connecting">正在连接…</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_disconnected">已断开</string>
+    <string name="log_label">日志</string>
+    <string name="log_empty">暂无日志</string>
+    <string name="notification_running">VPN 正在运行</string>
+    <string name="toast_fill_all">请填写服务器地址、Seed、Generation、PSK 和本机地址</string>
+    <string name="toast_generation_invalid">Generation 必须是整数</string>
+    <string name="toast_vpn_denied">未授予 VPN 权限</string>
+</resources>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CHIMERA Windows 客户端</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo">C</div>
+          <div>
+            <h1>CHIMERA</h1>
+            <p>Windows 客户端 · Wails v2</p>
+          </div>
+        </div>
+        <div id="statusBadge" class="badge disconnected">未连接</div>
+      </header>
+
+      <main>
+        <section class="card">
+          <h2>连接配置</h2>
+
+          <label class="field">
+            <span>服务器地址</span>
+            <input id="serverAddr" type="text" placeholder="127.0.0.1:443" autocomplete="off" />
+          </label>
+
+          <label class="field">
+            <span>Seed（协议种子）</span>
+            <div class="secret-row">
+              <input id="seedHex" type="password" placeholder="十六进制 seed" autocomplete="off" />
+              <button type="button" data-toggle="seedHex">显示</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Generation（协议世代）</span>
+            <input id="generation" type="number" min="0" step="1" value="0" />
+          </label>
+
+          <label class="field">
+            <span>PSK（预共享密钥）</span>
+            <div class="secret-row">
+              <input id="pskHex" type="password" placeholder="十六进制 PSK" autocomplete="off" />
+              <button type="button" data-toggle="pskHex">显示</button>
+            </div>
+          </label>
+
+          <div class="actions">
+            <button id="connectBtn" class="primary">连接</button>
+            <button id="disconnectBtn" class="ghost">断开</button>
+            <button id="defaultServerBtn" class="ghost">默认服务器</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>运行日志</h2>
+          <div id="logs" class="logs">
+            <div class="log muted">就绪，等待操作。</div>
+          </div>
+        </section>
+
+        <section class="card settings">
+          <h2>设置</h2>
+          <label class="check">
+            <input id="autoLoad" type="checkbox" checked />
+            启动时读取已保存配置
+          </label>
+          <label class="check">
+            <input id="autoStatus" type="checkbox" checked />
+            每 2 秒刷新状态
+          </label>
+          <p class="muted">
+            配置文件保存在可执行文件旁：<code>chimera-config.json</code>。
+          </p>
+          <button id="reloadConfigBtn" class="ghost">重新载入配置</button>
+        </section>
+      </main>
+
+      <footer>CHIMERA · Go + WebView2 · 前端由 Vite 构建</footer>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+[Unit]
+Description=CHIMERA generated-protocol VPN server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/chimerad -config /etc/chimera/server.json
+Restart=on-failure
+RestartSec=3
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=false
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
