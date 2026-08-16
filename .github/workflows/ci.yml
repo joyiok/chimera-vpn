@@ -164,3 +164,106 @@ jobs:
           printf '%s\n' "$out" | grep -F 'public static native void send('
           printf '%s\n' "$out" | grep -F 'public static native byte[] receive('
           printf '%s\n' "$out" | grep -F 'public static native void stop('
+
+  # gomobile + Android SDK/NDK. Ubuntu is enough; this does not need macos.
+  android-apk:
+    name: Android debug APK (gomobile + Gradle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "tools platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Bind Go core (bind.aar)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          ./apps/android/build-android-core.sh
+          test -s apps/android/app/libs/bind.aar
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: assembleDebug
+        working-directory: apps/android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload Android client
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChimeraClient-android-debug
+          path: |
+            apps/android/app/build/outputs/apk/debug/app-debug.apk
+            apps/android/app/libs/bind.aar
+          if-no-files-found: error
+          retention-days: 14
+
+  # gomobile iOS bind needs Xcode. This is the Go core XCFramework, not a
+  # signed IPA — Network Extension still needs the operator's Apple certs.
+  ios-xcframework:
+    name: iOS XCFramework (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Bind Go core (ChimeraBind.xcframework)
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          xcodebuild -version
+          ./apps/ios/build-ios-core.sh
+          test -d apps/ios/build/ChimeraBind.xcframework
+
+      - name: xcodebuild iOS Simulator (unsigned)
+        working-directory: apps/ios/ChimeraVPN
+        run: |
+          xcodebuild \
+            -project ChimeraVPN.xcodeproj \
+            -scheme ChimeraVPN \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ../build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            build
+
+      - name: Upload iOS XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChimeraBind-ios-xcframework
+          path: apps/ios/build/ChimeraBind.xcframework
+          if-no-files-found: error
+          retention-days: 14

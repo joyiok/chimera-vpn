@@ -113,11 +113,18 @@ workflow artifact 上传。PR / `main` 推送 / 手动 `workflow_dispatch` 都�
 ```bash
 cd apps/android
 ./build-android-core.sh      # 需要 ANDROID_HOME + NDK，生成 app/libs/bind.aar
-# 然后用 Android Studio 打开 apps/android
+# 然后用 Android Studio 打开 apps/android，或：
+#   gradle assembleDebug     # Gradle 8.7+ / JDK 17 / compileSdk 35
 ```
 
 未生成 AAR 时工程也能编译，连接时给出明确错误。
 Go 绑定 API 见 `bind/bind.go`；`gobind -lang=java chimera/bind` 可离线核对签名。
+`gomobile bind` 使用 `-androidapi 26`（与 `minSdk` 一致；新 NDK 已不再提供 API 16）。
+
+GitHub Actions job `android-apk`（`ubuntu-latest`，不需要 macOS）会装 SDK/NDK、
+跑 `build-android-core.sh`、再 `gradle assembleDebug`，上传 artifact
+`ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。Debug APK 用
+Android 默认 debug 密钥，可 sideload，不是 Play 签名包。
 
 ## iOS
 
@@ -129,8 +136,13 @@ cd apps/ios
 # 用 Xcode 打开 ChimeraVPN/ChimeraVPN.xcodeproj
 ```
 
-需要 Apple Developer 账号配置 App Group 与 NetworkExtension entitlements，
-两个 target 的 bundle id 见 pbxproj。
+GitHub Actions job `ios-xcframework`（`macos-latest`）会执行同一脚本，并把
+`ChimeraBind.xcframework` 作为 artifact `ChimeraBind-ios-xcframework` 上传；
+随后对共享 scheme `ChimeraVPN` 做无签名 iOS Simulator `xcodebuild`
+（Swift 脚手架编译检查；`#if canImport(ChimeraBind)` 在未链入 framework 时走桩）。
+
+这不是已签名 IPA。Packet Tunnel 上架/真机仍需要 Apple Developer 账号配置
+App Group 与 NetworkExtension entitlements，两个 target 的 bundle id 见 pbxproj。
 
 ## 移动端 Go 绑定签名核对
 

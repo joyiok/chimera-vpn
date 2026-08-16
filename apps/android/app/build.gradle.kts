@@ -31,6 +31,15 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+        resources {
+            excludes += setOf("META-INF/*.kotlin_module", "META-INF/NOTICE.md", "META-INF/LICENSE.md")
+        }
+    }
 }
 
 dependencies {

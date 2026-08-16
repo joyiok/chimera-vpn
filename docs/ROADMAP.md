@@ -20,7 +20,9 @@
 
 `.github/workflows/ci.yml`：根模块 fmt/vet/test-race/build、Windows 子模块双标签
 test/vet + amd64 交叉编译、**windows-latest 上 Wails GUI（`with_transport`）并上传
-`ChimeraClient.exe` + `wintun.dll`**、gobind Java 签名冒烟。
+`ChimeraClient.exe` + `wintun.dll`**、**ubuntu-latest 上 gomobile + Gradle debug APK**、
+**macos-latest 上 gomobile iOS XCFramework + 无签名 Simulator xcodebuild**、
+gobind Java 签名冒烟。iOS 已签名 IPA 仍需要仓库外的 Apple 证书，CI 不出。
 
 ## 3. ~~长期丢包恢复（packet ACK）~~（已完成）
 

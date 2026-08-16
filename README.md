@@ -173,6 +173,11 @@ journalctl -u chimerad -f
 
 ## 移动端构建
 
+GitHub Actions 会上传：
+
+- `ChimeraClient-android-debug` — `ubuntu-latest`，gomobile AAR + `assembleDebug`
+- `ChimeraBind-ios-xcframework` — `macos-latest`，gomobile XCFramework（不是已签名 IPA）
+
 ```bash
 # Android：生成 app/libs/bind.aar（需要 ANDROID_HOME + NDK）
 ./build/build-mobile-core.sh   # 或 apps/android/build-android-core.sh

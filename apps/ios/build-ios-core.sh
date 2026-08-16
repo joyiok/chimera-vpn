@@ -22,18 +22,24 @@ command -v go >/dev/null 2>&1 || {
   exit 1
 }
 
-# Install gomobile if it is not already available.
+export PATH="$(go env GOPATH)/bin:$PATH"
+
+# Install gomobile / gobind if they are not already available.
 if ! command -v gomobile >/dev/null 2>&1; then
   echo "==> gomobile not found; installing golang.org/x/mobile/cmd/gomobile@latest"
   (cd "$REPO_ROOT" && go install golang.org/x/mobile/cmd/gomobile@latest)
-  GOMOBILEDIR="$(go env GOPATH)/bin"
-  if [ -x "$GOMOBILEDIR/gomobile" ]; then
-    export PATH="$GOMOBILEDIR:$PATH"
-  fi
+fi
+if ! command -v gobind >/dev/null 2>&1; then
+  echo "==> gobind not found; installing golang.org/x/mobile/cmd/gobind@latest"
+  (cd "$REPO_ROOT" && go install golang.org/x/mobile/cmd/gobind@latest)
 fi
 
 command -v gomobile >/dev/null 2>&1 || {
   echo "error: gomobile still not found in PATH after install attempt" >&2
+  exit 1
+}
+command -v gobind >/dev/null 2>&1 || {
+  echo "error: gobind still not found in PATH after install attempt" >&2
   exit 1
 }
 

@@ -2,7 +2,7 @@
 //
 // Build for Android:
 //
-// gomobile bind -target=android -o bind.aar chimera/bind
+// gomobile bind -target=android -androidapi 26 -o bind.aar chimera/bind
 //
 // Build for iOS:
 //

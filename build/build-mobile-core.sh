@@ -17,7 +17,7 @@ fi
 gomobile init
 
 echo "building Android AAR..."
-gomobile bind -target=android -o dist/chimera-bind.aar chimera/bind
+gomobile bind -target=android -androidapi 26 -o dist/chimera-bind.aar chimera/bind
 
 echo "building iOS XCFramework (requires macOS + Xcode)..."
 gomobile bind -target=ios,iossimulator,macos -iosversion=13.0 -o dist/ChimeraBind.xcframework chimera/bind

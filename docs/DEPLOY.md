@@ -47,11 +47,27 @@ journalctl -u chimerad -f
 
 本机构建：`apps/windows` 下 `wails build -tags with_transport`（需要 Windows + CGO）。
 
-## 3. 移动端
+## 3. Android 客户端
 
-Android/iOS 源码已接 `protect(fd)` / 排除路由，**尚未真机验收**。构建见 [BUILD.md](BUILD.md)。
+1. GitHub Actions job `android-apk`（`ubuntu-latest`）下载 artifact
+   `ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。
+2. 允许未知来源后 sideload `app-debug.apk`。这是 debug 签名，不是 Play 发布包。
+3. 填入与服务器相同的 seed / generation / PSK / `host:port`。
+4. **尚未真机验收**；`VpnService.protect(fd)` 已接进源码。
 
-## 4. 不要做的事
+本机构建：`apps/android/build-android-core.sh` 后 Android Studio 或 `gradle assembleDebug`。
+
+## 4. iOS 核心（不是 IPA）
+
+1. GitHub Actions job `ios-xcframework`（`macos-latest`）下载 artifact
+   `ChimeraBind-ios-xcframework`。
+2. 用 Xcode 把 `ChimeraBind.xcframework` 链到 `ChimeraPacketTunnel`，配好 Team /
+   App Group / Network Extension 后真机运行。CI **不会**出已签名 IPA。
+3. **尚未真机验收**；服务器地址 `/32` excludedRoutes 已接进源码。
+
+本机构建：macOS 上 `apps/ios/build-ios-core.sh`。
+
+## 5. 不要做的事
 
 - 不要把配置文件 chmod 成 0644 或提交到 git。
 - 不要只升级一端。

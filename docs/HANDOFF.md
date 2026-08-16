@@ -3,7 +3,7 @@
 > 仓库：https://github.com/joyiok/chimera-vpn
 > 分支：`main`（Public）
 > 状态：可编译、可测试的研究型原型；数据面与守护进程已按自建 VPN 收紧，**不是**已验证的抗 GFW 产品。
-> 睡醒后从 [DEPLOY.md](DEPLOY.md) 跑服务端 + 下 Windows artifact。
+> 睡醒后从 [DEPLOY.md](DEPLOY.md) 跑服务端 + 下 Windows / Android artifact（iOS 是 XCFramework，不是 IPA）。
 
 ## 10 分钟快速了解
 
@@ -43,10 +43,10 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 地址自动分配 | ✅ 完成 | `10.99.0.0/24` 池测试 |
 | Linux 服务端 | ✅ 代码完成 | 编译/静态检查；TUN 需 root 实机 |
 | Windows GUI | ✅ 控制面 + Wintun 包泵 + 默认路由接管 | Linux 上交叉编译到 Windows 通过；路由需真机验收 |
-| Android/iOS | ⚠️ 源码骨架 | 未真机构建 |
+| Android/iOS | ⚠️ CI 可出包 | Android debug APK + iOS XCFramework 由 Actions 构建；真机与 IPA 签名未做 |
 | Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ✅ 完成 | ACK/SKIP 控制载荷；`-race` 测试含丢卡恢复用例 |
-| CI | ✅ 完成 | 根模块 + Windows 交叉编译 + **windows-latest Wails GUI 产物** + gobind |
+| CI | ✅ 完成 | 根模块 + Windows 交叉编译 + **windows-latest Wails GUI** + **ubuntu Android debug APK** + **macos iOS XCFramework** + gobind |
 | ChaCha20-Poly1305 | ✅ 完成 | `cipher` 配置强制覆盖；端到端 + 不匹配拒连测试 |
 | 握手重放防护 | ✅ 完成 | 流模式 64 序号位图，录制重放被拒 |
 | NAT keepalive / 空闲回收 / 限速 | ✅ 完成 | `keepalive_sec`/`idle_timeout_sec`/`rate_limit_kbps` 配置 |
