@@ -43,6 +43,18 @@ type serverConfig struct {
 	PSKHex     string    `json:"psk_hex"`
 	ClientCIDR string    `json:"client_cidr"`
 	Tun        tunConfig `json:"tun"`
+
+	// Cipher overrides the genome cipher draw ("" = default). Both
+	// endpoints must agree; e.g. "chacha20-poly1305".
+	Cipher string `json:"cipher"`
+
+	// KeepaliveSec refreshes NAT mappings on idle links (0 = default 25s,
+	// negative = disable).
+	KeepaliveSec int `json:"keepalive_sec"`
+	// IdleTimeoutSec reaps sessions quiet for that long (0 = disable).
+	IdleTimeoutSec int `json:"idle_timeout_sec"`
+	// RateLimitKBps caps each client's inbound rate in KiB/s (0 = off).
+	RateLimitKBps int `json:"rate_limit_kbps"`
 }
 
 func defaultConfig() serverConfig {
@@ -69,11 +81,15 @@ func main() {
 	}
 
 	coreCfg := core.Config{
-		SeedHex:    cfg.SeedHex,
-		Generation: cfg.Generation,
-		PSKHex:     cfg.PSKHex,
-		ServerAddr: cfg.Listen,
-		ClientCIDR: cfg.ClientCIDR,
+		SeedHex:              cfg.SeedHex,
+		Generation:           cfg.Generation,
+		PSKHex:               cfg.PSKHex,
+		ServerAddr:           cfg.Listen,
+		ClientCIDR:           cfg.ClientCIDR,
+		Cipher:               cfg.Cipher,
+		KeepaliveInterval:    time.Duration(cfg.KeepaliveSec) * time.Second,
+		IdleTimeout:          time.Duration(cfg.IdleTimeoutSec) * time.Second,
+		RateLimitBytesPerSec: cfg.RateLimitKBps * 1024,
 	}
 	if _, err := core.NormalizeConfig(coreCfg); err != nil {
 		fatal(err)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"chimera/internal/compiler"
@@ -17,6 +18,52 @@ const (
 	minFirstDatagram     = 16
 	newHandshakeMinGap   = time.Second
 )
+
+// tokenBucket is a simple byte-rate limiter for one session. rate is bytes
+// per second; capacity bounds bursts. A nil bucket means unlimited.
+type tokenBucket struct {
+	mu       sync.Mutex
+	rate     float64
+	capacity float64
+	tokens   float64
+	last     time.Time
+}
+
+func newTokenBucket(bytesPerSec, burst int) *tokenBucket {
+	if bytesPerSec <= 0 {
+		return nil // unlimited
+	}
+	cap := float64(burst)
+	if cap <= 0 || cap < float64(bytesPerSec) {
+		cap = float64(bytesPerSec)
+	}
+	return &tokenBucket{
+		rate:     float64(bytesPerSec),
+		capacity: cap,
+		tokens:   cap,
+		last:     time.Now(),
+	}
+}
+
+// take spends n bytes; false means the bucket is empty (drop the frame).
+func (b *tokenBucket) take(n int) bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	b.tokens += now.Sub(b.last).Seconds() * b.rate
+	if b.tokens > b.capacity {
+		b.tokens = b.capacity
+	}
+	b.last = now
+	if b.tokens < float64(n) {
+		return false
+	}
+	b.tokens -= float64(n)
+	return true
+}
 
 // ServerTunnel is one established packet session on a shared server socket.
 // Inbound frames are fed by ServerMux into a per-client queue; outbound
@@ -41,6 +88,13 @@ type ServerTunnel struct {
 	ack    ackTracker
 	ackDue uint64
 	ackMu  sync.Mutex
+
+	// lastActive is touched on every send/decode; the mux timerLoop
+	// reaps sessions idle past the configured timeout.
+	lastActive atomic.Int64 // unix nanos
+
+	// limiter caps this client's inbound datagram rate (nil = unlimited).
+	limiter *tokenBucket
 }
 
 func (t *ServerTunnel) SendPacket(packet []byte) error {
@@ -64,8 +118,38 @@ func (t *ServerTunnel) SendPacket(packet []byte) error {
 	if err != nil {
 		return err
 	}
+	t.touch()
 	t.maybeSendLossControl()
 	return nil
+}
+
+func (t *ServerTunnel) touch() { t.lastActive.Store(time.Now().UnixNano()) }
+
+// idleFor reports how long the session has been quiet.
+func (t *ServerTunnel) idleFor() time.Duration {
+	return time.Since(time.Unix(0, t.lastActive.Load()))
+}
+
+// IdleFor is the exported form of idleFor for operators and tests.
+func (t *ServerTunnel) IdleFor() time.Duration { return t.idleFor() }
+
+// sendKeepalive emits a ControlKeepalive frame if the link has been quiet.
+func (t *ServerTunnel) sendKeepalive(interval time.Duration) {
+	if t.idleFor() < interval {
+		return
+	}
+	t.sessMu.Lock()
+	frame, err := t.sess.Encode([]byte{ControlKeepalive})
+	t.sessMu.Unlock()
+	if err != nil {
+		return
+	}
+	if len(frame) > maxDatagram {
+		return
+	}
+	if _, err := t.conn.WriteTo(frame, t.peer); err == nil {
+		t.touch()
+	}
 }
 
 // maybeSendLossControl asks the client to skip a gap once the
@@ -91,23 +175,33 @@ func (t *ServerTunnel) maybeSendLossControl() {
 	t.ack.observeAck(sent)
 }
 
-// handleLossControl applies ACK/SKIP payloads; see PacketTunnel.
+// handleLossControl applies ACK/SKIP/keepalive payloads; see PacketTunnel.
 // Caller must hold sessMu.
 func (t *ServerTunnel) handleLossControl(pkt []byte) bool {
-	if len(pkt) != 9 || (pkt[0] != ControlAck && pkt[0] != ControlSkip) {
+	if len(pkt) == 0 {
 		return false
 	}
-	kind, v, err := decodeAckPayload(pkt)
-	if err != nil {
+	switch pkt[0] {
+	case ControlAck, ControlSkip:
+		if len(pkt) != 9 {
+			return true
+		}
+		kind, v, err := decodeAckPayload(pkt)
+		if err != nil {
+			return true
+		}
+		switch kind {
+		case ControlAck:
+			t.ack.observeAck(v)
+		case ControlSkip:
+			_ = t.sess.AdvanceBaseTo(v)
+		}
 		return true
+	case ControlKeepalive:
+		return true
+	default:
+		return false
 	}
-	switch kind {
-	case ControlAck:
-		t.ack.observeAck(v)
-	case ControlSkip:
-		_ = t.sess.AdvanceBaseTo(v)
-	}
-	return true
 }
 
 // noteDecoded counts decoded client frames; every ackEvery-th one triggers
@@ -208,6 +302,14 @@ type ServerMux struct {
 	cp   *compiler.CompiledProtocol
 	psk  []byte
 
+	// keepalive refreshes idle sessions (NAT mappings); idleTimeout reaps
+	// sessions quiet for that long (0 disables reaping). rateLimit caps
+	// each session's inbound bytes/sec (0 = unlimited). Configured via
+	// WithKeepalive / WithIdleTimeout / WithRateLimit before Run.
+	keepalive   time.Duration
+	idleTimeout time.Duration
+	rateLimit   int
+
 	mu          sync.Mutex
 	pending     map[string]*pendingHandshake
 	lastCreate  map[string]time.Time
@@ -224,6 +326,8 @@ func NewServerMux(conn net.PacketConn, cp *compiler.CompiledProtocol, psk []byte
 		conn:        conn,
 		cp:          cp,
 		psk:         psk,
+		keepalive:   DefaultKeepaliveInterval,
+		idleTimeout: time.Duration(1 << 62), // reaping off unless configured
 		pending:     map[string]*pendingHandshake{},
 		lastCreate:  map[string]time.Time{},
 		established: map[string]*ServerTunnel{},
@@ -231,6 +335,35 @@ func NewServerMux(conn net.PacketConn, cp *compiler.CompiledProtocol, psk []byte
 		closed:      make(chan struct{}),
 		done:        make(chan struct{}),
 	}
+}
+
+// WithKeepalive sets the server keepalive interval (0 = default,
+// negative = disabled).
+func (m *ServerMux) WithKeepalive(d time.Duration) *ServerMux {
+	if d < 0 {
+		d = time.Duration(1 << 62)
+	} else if d == 0 {
+		d = DefaultKeepaliveInterval
+	}
+	m.keepalive = d
+	return m
+}
+
+// WithIdleTimeout sets how long an established session may stay quiet
+// before it is reaped (<= 0 disables reaping).
+func (m *ServerMux) WithIdleTimeout(d time.Duration) *ServerMux {
+	if d <= 0 {
+		d = time.Duration(1 << 62)
+	}
+	m.idleTimeout = d
+	return m
+}
+
+// WithRateLimit caps each session's inbound datagram bytes per second
+// (<= 0 disables limiting). Applies to established sessions only.
+func (m *ServerMux) WithRateLimit(bytesPerSec int) *ServerMux {
+	m.rateLimit = bytesPerSec
+	return m
 }
 
 // Run drives the reader and retransmit timer until ctx is cancelled or the
@@ -279,6 +412,35 @@ func (m *ServerMux) timerLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.retransmit()
+			m.sweepSessions()
+		}
+	}
+}
+
+// sweepSessions sends keepalives on idle established sessions and closes
+// those idle past the configured timeout. Keepalives reset lastActive, so
+// a client that has vanished entirely is reaped after idleTimeout while a
+// live one stays connected forever.
+func (m *ServerMux) sweepSessions() {
+	m.mu.Lock()
+	tuns := make([]*ServerTunnel, 0, len(m.established))
+	for _, tun := range m.established {
+		tuns = append(tuns, tun)
+	}
+	m.mu.Unlock()
+
+	for _, tun := range tuns {
+		select {
+		case <-tun.closed:
+			continue
+		default:
+		}
+		if tun.idleFor() >= m.idleTimeout {
+			tun.Close()
+			continue
+		}
+		if m.keepalive > 0 {
+			tun.sendKeepalive(m.keepalive)
 		}
 	}
 }
@@ -294,6 +456,11 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 		if err != nil {
 			tun.sessMu.Unlock()
 			return // silent: duplicate, probe, or wrong session
+		}
+		tun.touch()
+		if !tun.limiter.take(len(data)) {
+			tun.sessMu.Unlock()
+			return // over budget: drop silently (client sees plain loss)
 		}
 		pkt := append([]byte(nil), msg.Payload...)
 		if tun.handleLossControl(pkt) {
@@ -457,12 +624,14 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 		return
 	}
 	tun := &ServerTunnel{
-		conn:   m.conn,
-		peer:   p.addr,
-		sess:   sess,
-		recv:   make(chan []byte, 128),
-		closed: make(chan struct{}),
+		conn:    m.conn,
+		peer:    p.addr,
+		sess:    sess,
+		recv:    make(chan []byte, 128),
+		closed:  make(chan struct{}),
+		limiter: newTokenBucket(m.rateLimit, m.rateLimit),
 	}
+	tun.lastActive.Store(time.Now().UnixNano())
 	tun.onClose = func() {
 		m.mu.Lock()
 		delete(m.established, p.addr.String())

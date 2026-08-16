@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"chimera/internal/compiler"
@@ -33,6 +34,13 @@ const (
 	// ControlSkip asks the peer to move its receive window base forward,
 	// declaring every sequence below it dead. Loss recovery half 2 of 2.
 	ControlSkip = 0x03
+	// ControlKeepalive is a 1-byte no-op payload sent periodically on idle
+	// sessions so NAT mappings and firewalls keep the 5-tuple alive.
+	ControlKeepalive = 0x04
+
+	// DefaultKeepaliveInterval refreshes NAT mappings well inside the
+	// 30s typical UDP timeout; 0 disables keepalives.
+	DefaultKeepaliveInterval = 25 * time.Second
 
 	// ackEvery: the receiver piggybacks nothing, so ACKs ride their own
 	// frames; 32 data frames between ACKs keeps overhead ~3%.
@@ -116,18 +124,69 @@ type PacketTunnel struct {
 	ack    ackTracker
 	ackDue uint64
 	ackMu  sync.Mutex
+
+	// keepalive state: lastActive is touched on every send/receive; the
+	// pump (if enabled) emits ControlKeepalive when the link goes quiet.
+	lastActive atomic.Int64 // unix nanos
+	kaCancel   context.CancelFunc
+	kaDone     chan struct{}
 }
 
 // NewPacketTunnel wraps an established packet session.
 func NewPacketTunnel(conn net.PacketConn, peer net.Addr, sess *compiler.PacketSession) *PacketTunnel {
-	return &PacketTunnel{
-		conn: conn,
-		peer: peer,
-		sess: sess,
-		ctrl: make(chan []byte, 4),
-		data: make(chan []byte, 256),
+	t := &PacketTunnel{
+		conn:   conn,
+		peer:   peer,
+		sess:   sess,
+		ctrl:   make(chan []byte, 4),
+		data:   make(chan []byte, 256),
+		kaDone: make(chan struct{}),
 	}
+	t.lastActive.Store(time.Now().UnixNano())
+	return t
 }
+
+// SetKeepalive starts the NAT keepalive pump. interval > 0 sets the idle
+// threshold, 0 uses DefaultKeepaliveInterval, negative disables the pump.
+// While traffic flows the pump stays silent; after one interval of silence
+// it sends ControlKeepalive so NAT mappings and firewalls keep the UDP
+// 5-tuple alive. Call before the platform packet pumps start.
+func (t *PacketTunnel) SetKeepalive(interval time.Duration) {
+	if t.kaCancel != nil {
+		t.kaCancel()
+		<-t.kaDone
+		t.kaCancel = nil
+	}
+	if interval < 0 {
+		return // disabled
+	}
+	if interval == 0 {
+		interval = DefaultKeepaliveInterval
+	}
+	done := make(chan struct{})
+	t.kaDone = done
+	ctx, cancel := context.WithCancel(context.Background())
+	t.kaCancel = cancel
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				idle := time.Since(time.Unix(0, t.lastActive.Load()))
+				if idle < interval {
+					continue
+				}
+				_ = t.sendControlRaw([]byte{ControlKeepalive})
+			}
+		}
+	}()
+}
+
+func (t *PacketTunnel) touch() { t.lastActive.Store(time.Now().UnixNano()) }
 
 // SendPacket encrypts and transmits one IP packet.
 func (t *PacketTunnel) SendPacket(packet []byte) error {
@@ -155,6 +214,7 @@ func (t *PacketTunnel) sendPayload(payload []byte) error {
 	if err != nil {
 		return err
 	}
+	t.touch()
 	t.maybeSendLossControl()
 	return nil
 }
@@ -202,27 +262,37 @@ func (t *PacketTunnel) sendControlRaw(payload []byte) error {
 }
 
 // handleLossControl applies a decoded control payload, returning true when
-// the payload was an ACK/SKIP frame (data callers continue the loop).
+// the payload was a control frame (data callers continue the loop).
 // Caller must hold sessMu.
 func (t *PacketTunnel) handleLossControl(pkt []byte) bool {
-	if len(pkt) != 9 || (pkt[0] != ControlAck && pkt[0] != ControlSkip) {
+	if len(pkt) == 0 {
 		return false
 	}
-	kind, v, err := decodeAckPayload(pkt)
-	if err != nil {
-		return true
-	}
-	switch kind {
-	case ControlAck:
-		t.ack.observeAck(v)
-	case ControlSkip:
-		if err := t.sess.AdvanceBaseTo(v); err != nil {
-			// A skip beyond our window or below base is stale/malicious;
-			// ignore it silently.
-			_ = err
+	switch pkt[0] {
+	case ControlAck, ControlSkip:
+		if len(pkt) != 9 {
+			return true // malformed control: swallow
 		}
+		kind, v, err := decodeAckPayload(pkt)
+		if err != nil {
+			return true
+		}
+		switch kind {
+		case ControlAck:
+			t.ack.observeAck(v)
+		case ControlSkip:
+			if err := t.sess.AdvanceBaseTo(v); err != nil {
+				// A skip beyond our window or below base is stale/malicious;
+				// ignore it silently.
+				_ = err
+			}
+		}
+		return true
+	case ControlKeepalive:
+		return true // NAT probe: refresh only
+	default:
+		return false
 	}
-	return true
 }
 
 // decodeLocked authenticates one datagram and applies control payloads.
@@ -232,6 +302,7 @@ func (t *PacketTunnel) decodeLocked(buf []byte) (pkt []byte, isCtrl bool, err er
 	if err != nil {
 		return nil, false, err
 	}
+	t.touch()
 	pkt = append([]byte(nil), msg.Payload...)
 	if t.handleLossControl(pkt) {
 		return nil, true, nil
@@ -377,8 +448,13 @@ func (t *PacketTunnel) WaitControl(ctx context.Context) ([]byte, error) {
 // RemoteAddr returns the peer endpoint.
 func (t *PacketTunnel) RemoteAddr() net.Addr { return t.peer }
 
-// Close releases the underlying socket.
+// Close releases the underlying socket and stops the keepalive pump.
 func (t *PacketTunnel) Close() error {
+	if t.kaCancel != nil {
+		t.kaCancel()
+		<-t.kaDone
+		t.kaCancel = nil
+	}
 	if t.conn != nil {
 		return t.conn.Close()
 	}

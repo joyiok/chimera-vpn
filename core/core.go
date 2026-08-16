@@ -12,6 +12,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"chimera/internal/compiler"
 	"chimera/internal/genome"
@@ -27,6 +28,19 @@ type Config struct {
 	PSKHex     string
 	ServerAddr string
 	ClientCIDR string // server-only: client TUN pool, e.g. 10.99.0.0/24
+	// Cipher overrides the genome's cipher draw ("" = genome default).
+	// genome.CipherChaCha20P1305 suits clients without AES acceleration;
+	// both endpoints must configure the same value.
+	Cipher string
+	// KeepaliveInterval refreshes NAT mappings on idle links (<= 0 uses
+	// tunnel.DefaultKeepaliveInterval).
+	KeepaliveInterval time.Duration
+	// IdleTimeout (server) reaps sessions quiet for that long (<= 0 =
+	// never reap).
+	IdleTimeout time.Duration
+	// RateLimitBytesPerSec (server) caps each session's inbound datagram
+	// rate (<= 0 = unlimited).
+	RateLimitBytesPerSec int
 }
 
 // NormalizeConfig validates and decodes a Config.
@@ -41,6 +55,9 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.ServerAddr) == "" {
 		return cfg, errors.New("server address is empty")
+	}
+	if cfg.Cipher != "" && !genome.KnownCipher(cfg.Cipher) {
+		return cfg, fmt.Errorf("unknown cipher %q", cfg.Cipher)
 	}
 	cfg.SeedHex = hex.EncodeToString(seed)
 	cfg.PSKHex = hex.EncodeToString(psk)
@@ -95,7 +112,7 @@ func (c *Client) Start() error {
 		return err
 	}
 
-	g, err := genome.Generate(seed, c.cfg.Generation)
+	g, err := genome.GenerateWithCipher(seed, c.cfg.Generation, c.cfg.Cipher)
 	if err != nil {
 		conn.Close()
 		return err
@@ -118,6 +135,7 @@ func (c *Client) Start() error {
 
 	c.conn = conn
 	c.tun = tunnel.NewPacketTunnel(conn, remote, sess)
+	c.tun.SetKeepalive(c.cfg.KeepaliveInterval)
 	return nil
 }
 
@@ -223,7 +241,7 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	g, err := genome.Generate(seed, s.cfg.Generation)
+	g, err := genome.GenerateWithCipher(seed, s.cfg.Generation, s.cfg.Cipher)
 	if err != nil {
 		conn.Close()
 		return err
@@ -236,6 +254,9 @@ func (s *Server) Start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mux := tunnel.NewServerMux(conn, cp, psk)
+	mux.WithKeepalive(s.cfg.KeepaliveInterval).
+		WithIdleTimeout(s.cfg.IdleTimeout).
+		WithRateLimit(s.cfg.RateLimitBytesPerSec)
 	done := make(chan struct{})
 	go func() {
 		mux.Run(ctx)

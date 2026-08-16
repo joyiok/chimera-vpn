@@ -4,6 +4,10 @@
   "generation": 0,
   "psk_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "client_cidr": "10.99.0.0/24",
+  "cipher": "",
+  "keepalive_sec": 25,
+  "idle_timeout_sec": 180,
+  "rate_limit_kbps": 0,
   "tun": {
     "name": "chimera0",
     "address": "10.99.0.1/24",
