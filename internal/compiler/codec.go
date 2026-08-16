@@ -46,6 +46,9 @@ type MessageCodec struct {
 	packetBase uint64
 	packetSeen [packetWindowWords]uint64
 	packetMode bool
+	// shapeBuckets, when set, pads packet-mode frames up to the next
+	// rung so ciphertext lengths take a small number of values.
+	shapeBuckets []int
 }
 
 // seenWindow is a 64-entry anti-replay bitmap over contiguous sequence

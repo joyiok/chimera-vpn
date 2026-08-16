@@ -1,7 +1,7 @@
 // Package tunnel implements the CHIMERA UDP transport: datagram handshake
-// with retransmission plus encrypted packet forwarding. It deliberately
-// ignores malformed datagrams without answering, so active probes receive
-// nothing usable.
+// with retransmission plus encrypted packet forwarding. Malformed
+// datagrams are ignored; when a decoy protocol is configured they may
+// instead elicit a frame of a different generated species (anti-probe).
 package tunnel
 
 import (
@@ -50,6 +50,10 @@ const (
 	// than let the window wedge. 3/4 leaves headroom for in-flight frames.
 	skipSpan = compiler.PacketWindow * 3 / 4
 )
+
+// ErrHandshakeTimeout marks a handshake that never completed; clients use
+// it to decide whether probing the next generation is worthwhile.
+var ErrHandshakeTimeout = errors.New("handshake timeout")
 
 // ackTracker is one direction's loss-recovery state. The owner of a
 // tracker is the sender; peerBase is the peer's ACKed contiguous position
@@ -146,6 +150,16 @@ func NewPacketTunnel(conn net.PacketConn, peer net.Addr, sess *compiler.PacketSe
 	return t
 }
 
+// SetShapeBuckets pads encoded datagrams to the next length rung.
+// Empty disables shaping. Call before packet pumps start.
+func (t *PacketTunnel) SetShapeBuckets(buckets []int) {
+	t.sessMu.Lock()
+	defer t.sessMu.Unlock()
+	if t.sess != nil {
+		t.sess.SetShapeBuckets(buckets)
+	}
+}
+
 // SetKeepalive starts the NAT keepalive pump. interval > 0 sets the idle
 // threshold, 0 uses DefaultKeepaliveInterval, negative disables the pump.
 // While traffic flows the pump stays silent; after one interval of silence
@@ -187,6 +201,13 @@ func (t *PacketTunnel) SetKeepalive(interval time.Duration) {
 }
 
 func (t *PacketTunnel) touch() { t.lastActive.Store(time.Now().UnixNano()) }
+
+// IdleFor reports how long the link has been quiet (no authenticated frame
+// either way). Client watchdogs treat multiples of the keepalive interval
+// as link loss.
+func (t *PacketTunnel) IdleFor() time.Duration {
+	return time.Since(time.Unix(0, t.lastActive.Load()))
+}
 
 // SendPacket encrypts and transmits one IP packet.
 func (t *PacketTunnel) SendPacket(packet []byte) error {
@@ -582,7 +603,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 			break
 		}
 		if !received && !h.Done() {
-			return nil, fmt.Errorf("handshake timeout at step %d", h.Progress())
+			return nil, fmt.Errorf("step %d: %w", h.Progress(), ErrHandshakeTimeout)
 		}
 	}
 

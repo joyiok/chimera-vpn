@@ -48,15 +48,32 @@ func (c *MessageCodec) EncodePacket(payload []byte, inject map[string][]byte, rn
 		return nil, err
 	}
 
-	var pt []byte
-	for _, f := range spec.EncryptedFields {
-		b, err := c.encodeEncryptedField(f, padLen, inject, rnd)
-		if err != nil {
-			return nil, err
-		}
-		pt = append(pt, b...)
+	body, padOff, padWidth, err := c.encodeEncryptedBody(padLen, inject, rnd)
+	if err != nil {
+		return nil, err
 	}
-	pt = append(pt, payload...)
+
+	if idx := padFieldIndex(spec); idx >= 0 && padWidth > 0 && padOff >= 0 && len(c.shapeBuckets) > 0 {
+		maxPad := padFieldMax(spec)
+		frameLen := plainFieldsSize(spec) + len(body) + len(payload) + padLen + gcmTagSize
+		if target := nextShapeSize(frameLen, c.shapeBuckets); target > frameLen {
+			extra := target - frameLen
+			if padLen+extra <= maxPad {
+				padLen += extra
+				pf := spec.EncryptedFields[idx]
+				enc, err := encodeInt(uint64(padLen), pf.Encoding, pf.Endian)
+				if err != nil {
+					return nil, err
+				}
+				if len(enc) != padWidth {
+					return nil, fmt.Errorf("pad_length width changed while shaping")
+				}
+				copy(body[padOff:padOff+padWidth], enc)
+			}
+		}
+	}
+
+	pt := append(body, payload...)
 	if padLen > 0 {
 		pad := make([]byte, padLen)
 		if _, err := io.ReadFull(rnd, pad); err != nil {
@@ -215,4 +232,69 @@ func (p *PacketSession) PacketBase() uint64 { return p.recv.PacketBase() }
 // to skip a lost run of frames). See MessageCodec.AdvanceBaseTo.
 func (p *PacketSession) AdvanceBaseTo(target uint64) error {
 	return p.recv.AdvanceBaseTo(target)
+}
+
+// DefaultShapeBuckets is the production datagram-length ladder. Frames
+// already larger than the last rung are left alone so we never force
+// UDP fragmentation just to hit a bucket.
+var DefaultShapeBuckets = []int{128, 512, 1024, 1452}
+
+// SetShapeBuckets pads encoded frames up to the next rung of buckets.
+// An empty slice disables shaping. Only the send codec is affected.
+func (p *PacketSession) SetShapeBuckets(buckets []int) {
+	p.send.shapeBuckets = append([]int(nil), buckets...)
+}
+
+func nextShapeSize(n int, buckets []int) int {
+	if n <= 0 || len(buckets) == 0 {
+		return n
+	}
+	for _, b := range buckets {
+		if n <= b {
+			return b
+		}
+	}
+	return n
+}
+
+func padFieldIndex(spec genome.MessageSpec) int {
+	for i, f := range spec.EncryptedFields {
+		if f.Kind == genome.FieldPadLen {
+			return i
+		}
+	}
+	return -1
+}
+
+func padFieldMax(spec genome.MessageSpec) int {
+	i := padFieldIndex(spec)
+	if i < 0 {
+		return 0
+	}
+	n := intWidth(spec.EncryptedFields[i].Encoding)
+	if n <= 0 {
+		return 0
+	}
+	if n >= 3 {
+		return 1<<20 - 1 // 1 MiB cap; u24/u32 never need more on a UDP path
+	}
+	return int(1<<(8*n)) - 1
+}
+
+func (c *MessageCodec) encodeEncryptedBody(padLen int, inject map[string][]byte, rnd io.Reader) (body []byte, padOff, padWidth int, err error) {
+	padOff = -1
+	for _, f := range c.spec.EncryptedFields {
+		if f.Kind == genome.FieldPadLen {
+			padOff = len(body)
+		}
+		b, err := c.encodeEncryptedField(f, padLen, inject, rnd)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		if f.Kind == genome.FieldPadLen {
+			padWidth = len(b)
+		}
+		body = append(body, b...)
+	}
+	return body, padOff, padWidth, nil
 }

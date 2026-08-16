@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -55,13 +56,22 @@ type serverConfig struct {
 	IdleTimeoutSec int `json:"idle_timeout_sec"`
 	// RateLimitKBps caps each client's inbound rate in KiB/s (0 = off).
 	RateLimitKBps int `json:"rate_limit_kbps"`
+	// MaxSessions caps established clients (0 = default 256).
+	MaxSessions int `json:"max_sessions"`
+	// DisableDecoy turns off anti-probe decoy replies (default: decoys on).
+	DisableDecoy bool `json:"disable_decoy"`
+	// DisableShape turns off datagram length shaping (default: on).
+	DisableShape bool `json:"disable_shape"`
 }
 
 func defaultConfig() serverConfig {
 	return serverConfig{
-		Listen:     "0.0.0.0:4789",
-		ClientCIDR: "10.99.0.0/24",
-		Tun:        tunConfig{Name: "chimera0", Address: "10.99.0.1/24", MTU: 1400},
+		Listen:         "0.0.0.0:4789",
+		ClientCIDR:     "10.99.0.0/24",
+		KeepaliveSec:   25,
+		IdleTimeoutSec: 180,
+		MaxSessions:    256,
+		Tun:            tunConfig{Name: "chimera0", Address: "10.99.0.1/24", MTU: 1400},
 	}
 }
 
@@ -90,10 +100,15 @@ func main() {
 		KeepaliveInterval:    time.Duration(cfg.KeepaliveSec) * time.Second,
 		IdleTimeout:          time.Duration(cfg.IdleTimeoutSec) * time.Second,
 		RateLimitBytesPerSec: cfg.RateLimitKBps * 1024,
+		MaxSessions:          cfg.MaxSessions,
+		DisableDecoy:         cfg.DisableDecoy,
+		DisableShape:         cfg.DisableShape,
 	}
-	if _, err := core.NormalizeConfig(coreCfg); err != nil {
+	normalized, err := core.NormalizeConfig(coreCfg)
+	if err != nil {
 		fatal(err)
 	}
+	coreCfg = normalized
 	if cfg.Tun.Name == "" {
 		cfg.Tun.Name = "chimera0"
 	}
@@ -204,7 +219,7 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	if err := srv.Start(); err != nil {
 		return err
 	}
-	log.Printf("accepting clients on udp/%s", coreCfg.ServerAddr)
+	log.Printf("accepting clients on udp/%s fingerprint=%s", coreCfg.ServerAddr, fingerprint(coreCfg))
 
 	routes := newClientRoute()
 	errCh := make(chan error, 4)
@@ -242,6 +257,23 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 			}
 			log.Printf("client %s connected", conn.RemoteAddr())
 			go pumpClientToTun(conn, dev, routes, errCh)
+		}
+	}()
+
+	// Ops heartbeat: session counts + authenticated-datagram length
+	// histogram (groundwork for length shaping).
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				st := srv.Stats()
+				log.Printf("stats: sessions=%d pending=%d decoys=%d frame_lens=%s",
+					st.Established, st.Pending, st.Decoys, formatFrameLens(st.FrameLens))
+			}
 		}
 	}()
 
@@ -285,6 +317,19 @@ func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute, errC
 			return
 		}
 	}
+}
+
+func formatFrameLens(counts []uint64) string {
+	bounds := []string{"<128", "<512", "<1024", "<1408", "<1500", ">=1500"}
+	parts := make([]string, 0, len(counts))
+	for i, c := range counts {
+		name := "big"
+		if i < len(bounds) {
+			name = bounds[i]
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d", name, c))
+	}
+	return strings.Join(parts, " ")
 }
 
 func fingerprint(cfg core.Config) string {

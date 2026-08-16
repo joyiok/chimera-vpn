@@ -8,6 +8,9 @@
   "keepalive_sec": 25,
   "idle_timeout_sec": 180,
   "rate_limit_kbps": 0,
+  "max_sessions": 256,
+  "disable_decoy": false,
+  "disable_shape": false,
   "tun": {
     "name": "chimera0",
     "address": "10.99.0.1/24",

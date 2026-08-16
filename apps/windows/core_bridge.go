@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"time"
 )
 
 // startTransport 是桩实现：不启动任何真实协议。
@@ -41,3 +42,6 @@ func startPacketBridge(ip string) error {
 }
 
 func stopPacketBridge() {}
+
+// linkIdleFor 桩实现：无真实传输层，链路视为不空闲。
+func linkIdleFor() time.Duration { return 0 }

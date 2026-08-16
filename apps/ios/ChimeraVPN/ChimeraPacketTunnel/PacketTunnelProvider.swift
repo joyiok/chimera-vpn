@@ -1,6 +1,7 @@
 import Foundation
 import NetworkExtension
 import os.log
+import Darwin
 
 /// NEPacketTunnelProvider entry point for the ChimeraVPN tunnel target.
 ///
@@ -61,6 +62,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
+        var localIP = tunIP
         do {
             handle = try GoBind.shared.start(
                 seedHex: seedHex,
@@ -70,16 +72,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             )
             os_log(.info, log: log, "Go core started with handle %lld", handle)
 
-            let assignedIP = try? GoBind.shared.assignedIP(handle)
-            let localIP = assignedIP ?? tunIP
-            os_log(.info, log: log, "local TUN address %{public}@ (assigned=%{public}@)", localIP, assignedIP ?? "manual")
+            if let assignedIP = try? GoBind.shared.assignedIP(handle), !assignedIP.isEmpty {
+                localIP = assignedIP
+                os_log(.info, log: log, "local TUN address %{public}@ (server assigned)", localIP)
+            } else {
+                os_log(.info, log: log, "local TUN address %{public}@ (manual)", localIP)
+            }
         } catch {
             os_log(.error, log: log, "GoBind.start failed: %{public}@", error.localizedDescription)
             completionHandler(error)
             return
         }
 
-        applyNetworkSettings(localIP: localIP) { [weak self] error in
+        applyNetworkSettings(localIP: localIP, serverAddr: serverAddr) { [weak self] error in
             guard let self = self else {
                 completionHandler(error)
                 return
@@ -123,11 +128,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Virtual interface
 
-    private func applyNetworkSettings(localIP: String, completion: @escaping (Error?) -> Void) {
+    private func applyNetworkSettings(localIP: String, serverAddr: String, completion: @escaping (Error?) -> Void) {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.99.0.1")
 
         let ipv4Settings = NEIPv4Settings(addresses: [localIP], subnetMasks: ["255.255.255.0"])
         ipv4Settings.includedRoutes = [NEIPv4Route.defaultRoute()]
+        if let host = Self.hostOf(serverAddr), Self.isIPv4(host) {
+            ipv4Settings.excludedRoutes = [
+                NEIPv4Route(destinationAddress: host, subnetMask: "255.255.255.255")
+            ]
+        }
         settings.ipv4Settings = ipv4Settings
 
         let dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "8.8.8.8"])
@@ -174,11 +184,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     guard self.isRunning else { break }
                     if data.isEmpty { continue }
 
-                    self.packetFlow.writePackets([data]) { error in
-                        if let error {
-                            os_log(.error, log: self.log, "writePackets failed: %{public}@", error.localizedDescription)
-                        }
-                    }
+                    let version = data[0] >> 4
+                    let family: sa_family_t = version == 6
+                        ? sa_family_t(AF_INET6)
+                        : sa_family_t(AF_INET)
+                    self.packetFlow.writePacketObjects([
+                        NEPacket(data: data, protocolFamily: family)
+                    ])
                 } catch {
                     if self.isRunning {
                         os_log(.error, log: self.log, "GoBind.receive failed: %{public}@", error.localizedDescription)
@@ -194,6 +206,31 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     // MARK: - Helpers
+
+    static func hostOf(_ serverAddr: String) -> String? {
+        let trimmed = serverAddr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("[") {
+            guard let close = trimmed.firstIndex(of: "]") else { return nil }
+            return String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
+        }
+        if let idx = trimmed.lastIndex(of: ":") {
+            let host = String(trimmed[..<idx])
+            let port = trimmed[trimmed.index(after: idx)...]
+            if !port.isEmpty, port.allSatisfy({ $0.isNumber }) {
+                return host
+            }
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func isIPv4(_ host: String) -> Bool {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard let n = Int(part) else { return false }
+            return n >= 0 && n <= 255
+        }
+    }
 
     private static func makeError(_ message: String) -> NSError {
         NSError(

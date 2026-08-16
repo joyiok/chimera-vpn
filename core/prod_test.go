@@ -142,3 +142,59 @@ func TestIdleReapConfigWiring(t *testing.T) {
 	}
 	t.Fatal("idle session was never reaped via core config")
 }
+
+func TestUDPFileDescriptor(t *testing.T) {
+	_, client, _ := runPair(t, nil)
+	fd, err := client.UDPFileDescriptor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fd < 0 {
+		t.Fatalf("fd=%d", fd)
+	}
+}
+
+func TestMaxSessionsConfigWiring(t *testing.T) {
+	addr := freeUDPAddr(t)
+	cfg := Config{
+		SeedHex:      hex32(80),
+		PSKHex:       hex32(81),
+		ServerAddr:   addr,
+		MaxSessions:  1,
+		DisableDecoy: true,
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Close() })
+
+	first, err := NewClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { first.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := server.Accept(ctx)
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	second, err := NewClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Start(); err == nil {
+		second.Close()
+		t.Fatal("second client connected despite MaxSessions=1")
+	}
+}

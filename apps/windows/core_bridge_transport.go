@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	core "chimera/core"
 
@@ -24,12 +25,14 @@ var packetBridge *bridge.Bridge
 var routeTakeover = bridge.NewRouteTakeover()
 
 // startTransport 使用计划中的 core API 创建并启动客户端。
+// GenerationWindow=2：服务器轮换 generation 后握手超时自动探测 gen+1/gen+2。
 func startTransport(cfg appConfig) error {
 	client, err := core.NewClient(core.Config{
-		SeedHex:    cfg.SeedHex,
-		Generation: cfg.Generation,
-		PSKHex:     cfg.PSKHex,
-		ServerAddr: cfg.ServerAddr,
+		SeedHex:          cfg.SeedHex,
+		Generation:       cfg.Generation,
+		GenerationWindow: 2,
+		PSKHex:           cfg.PSKHex,
+		ServerAddr:       cfg.ServerAddr,
 	})
 	if err != nil {
 		return fmt.Errorf("core.NewClient: %w", err)
@@ -41,8 +44,17 @@ func startTransport(cfg appConfig) error {
 	}
 
 	transportClient = client
-	log.Printf("[coreBridge] 真实传输层已启动：server=%s generation=%d", cfg.ServerAddr, cfg.Generation)
+	log.Printf("[coreBridge] 真实传输层已启动：server=%s generation=%d", cfg.ServerAddr, client.Generation())
 	return nil
+}
+
+// linkIdleFor 返回当前会话的入站静默时长；未连接时为 0。
+// app 层 watchdog 据此判定失联（健康链路 keepalive 下不会超过一个间隔）。
+func linkIdleFor() time.Duration {
+	if transportClient == nil {
+		return 0
+	}
+	return transportClient.IdleFor()
 }
 
 // stopTransport 关闭真实核心客户端。

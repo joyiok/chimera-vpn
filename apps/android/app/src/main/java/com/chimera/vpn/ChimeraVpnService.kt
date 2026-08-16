@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
@@ -102,7 +103,7 @@ class ChimeraVpnService : VpnService() {
         return Notification.Builder(this, channelId)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.notification_running))
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_vpn)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
@@ -120,6 +121,10 @@ class ChimeraVpnService : VpnService() {
                 pskHex = config.pskHex,
                 serverAddr = config.serverAddr
             )
+            if (!protectUdpSocket(handle)) {
+                runCatching { GoBind.stop(handle) }
+                throw IllegalStateException("VpnService.protect 失败，UDP 套接字无法绕过 TUN")
+            }
             val assigned = runCatching { GoBind.assignedIP(handle) }.getOrNull()
             val tunAddr = assigned ?: config.tunIp
 
@@ -130,6 +135,15 @@ class ChimeraVpnService : VpnService() {
                 .addRoute("0.0.0.0", 0)
                 .addDnsServer("1.1.1.1")
                 .addDnsServer("8.8.8.8")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                builder.setMetered(false)
+            }
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (e: PackageManager.NameNotFoundException) {
+                postLog("addDisallowedApplication 跳过：${e.message}")
+            }
 
             val pfd = builder.establish()
             vpnInterface = pfd
@@ -209,6 +223,25 @@ class ChimeraVpnService : VpnService() {
             isRunning = false
             postStatus(getString(R.string.status_disconnected))
         }
+    }
+
+    private fun protectUdpSocket(handle: Long): Boolean {
+        val fd = try {
+            GoBind.socketFD(handle)
+        } catch (e: Exception) {
+            postLog("socketFD 失败：${e.message}")
+            return false
+        }
+        if (fd < 0) {
+            postLog("socketFD 返回无效描述符 $fd")
+            return false
+        }
+        if (!protect(fd)) {
+            postLog("protect($fd) 失败")
+            return false
+        }
+        postLog("已 protect UDP fd=$fd，隧道套接字绕过 TUN")
+        return true
     }
 
     private fun parseConfig(intent: Intent): VpnConfig {

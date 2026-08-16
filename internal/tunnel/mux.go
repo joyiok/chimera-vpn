@@ -293,10 +293,51 @@ type pendingHandshake struct {
 	attempts int
 	backoff  time.Duration
 	addr     net.Addr
+	recvOK   bool // true after at least one authenticated client step
+}
+
+// frameLenBuckets bound the datagram-length histogram exposed by Stats;
+// the buckets bracket typical VPN-relevant sizes (tiny controls, DNS,
+// TCP ACKs, full MTU frames) for later length-shaping analysis.
+var frameLenBuckets = []int{128, 512, 1024, 1408, 1500}
+
+// MuxStats is a point-in-time operational snapshot of one multiplexer.
+type MuxStats struct {
+	Established int      // live sessions
+	Pending     int      // handshakes in flight
+	FrameLens   []uint64 // authenticated datagrams per bucket + overflow
+	Decoys      uint64   // anti-probe decoy replies sent
+}
+
+// Stats snapshots session counts and the authenticated-datagram length
+// histogram (traffic-shaping groundwork; probes and junk are excluded).
+func (m *ServerMux) Stats() MuxStats {
+	m.mu.Lock()
+	s := MuxStats{
+		Established: len(m.established),
+		Pending:     len(m.pending),
+		FrameLens:   make([]uint64, len(frameLenBuckets)+1),
+		Decoys:      m.decoysSent,
+	}
+	copy(s.FrameLens, m.frameLens[:])
+	m.mu.Unlock()
+	return s
+}
+
+// noteFrameLen records one authenticated datagram under m.mu.
+func (m *ServerMux) noteFrameLen(n int) {
+	for i, bound := range frameLenBuckets {
+		if n < bound {
+			m.frameLens[i]++
+			return
+		}
+	}
+	m.frameLens[len(frameLenBuckets)]++
 }
 
 // ServerMux multiplexes many client handshakes and sessions over one UDP
-// socket. Invalid datagrams are ignored silently (anti-probe behaviour).
+// socket. Invalid first packets are dropped, or answered with a decoy
+// protocol when WithDecoy is set.
 type ServerMux struct {
 	conn net.PacketConn
 	cp   *compiler.CompiledProtocol
@@ -304,20 +345,30 @@ type ServerMux struct {
 
 	// keepalive refreshes idle sessions (NAT mappings); idleTimeout reaps
 	// sessions quiet for that long (0 disables reaping). rateLimit caps
-	// each session's inbound bytes/sec (0 = unlimited). Configured via
-	// WithKeepalive / WithIdleTimeout / WithRateLimit before Run.
-	keepalive   time.Duration
-	idleTimeout time.Duration
-	rateLimit   int
+	// each session's inbound bytes/sec (0 = unlimited). maxSessions caps
+	// established clients (0 = unlimited). decoy, when set, replies to
+	// failed first-packet probes with a different generated protocol.
+	// Configured via WithKeepalive / WithIdleTimeout / WithRateLimit /
+	// WithMaxSessions / WithDecoy before Run.
+	keepalive    time.Duration
+	idleTimeout  time.Duration
+	rateLimit    int
+	maxSessions  int
+	decoy        *compiler.CompiledProtocol
+	shapeBuckets []int
 
-	mu          sync.Mutex
-	pending     map[string]*pendingHandshake
-	lastCreate  map[string]time.Time
-	established map[string]*ServerTunnel
-	ready       chan *ServerTunnel
-	closed      chan struct{}
-	closeOnce   sync.Once
-	done        chan struct{}
+	mu               sync.Mutex
+	pending          map[string]*pendingHandshake
+	lastCreate       map[string]time.Time
+	established      map[string]*ServerTunnel
+	frameLens        []uint64
+	decoyWindowStart time.Time
+	decoyWindowCount int
+	decoysSent       uint64
+	ready            chan *ServerTunnel
+	closed           chan struct{}
+	closeOnce        sync.Once
+	done             chan struct{}
 }
 
 // NewServerMux builds a multiplexer for one generated protocol.
@@ -328,6 +379,7 @@ func NewServerMux(conn net.PacketConn, cp *compiler.CompiledProtocol, psk []byte
 		psk:         psk,
 		keepalive:   DefaultKeepaliveInterval,
 		idleTimeout: time.Duration(1 << 62), // reaping off unless configured
+		frameLens:   make([]uint64, len(frameLenBuckets)+1),
 		pending:     map[string]*pendingHandshake{},
 		lastCreate:  map[string]time.Time{},
 		established: map[string]*ServerTunnel{},
@@ -363,6 +415,31 @@ func (m *ServerMux) WithIdleTimeout(d time.Duration) *ServerMux {
 // (<= 0 disables limiting). Applies to established sessions only.
 func (m *ServerMux) WithRateLimit(bytesPerSec int) *ServerMux {
 	m.rateLimit = bytesPerSec
+	return m
+}
+
+// WithMaxSessions caps the number of established clients. New handshakes
+// are dropped silently once the cap is reached (<= 0 = unlimited).
+func (m *ServerMux) WithMaxSessions(n int) *ServerMux {
+	if n < 0 {
+		n = 0
+	}
+	m.maxSessions = n
+	return m
+}
+
+// WithDecoy installs a second compiled protocol used only to answer
+// invalid first packets. The decoy species must not be a generation the
+// real clients will probe (see DecoyGeneration). nil disables decoys.
+func (m *ServerMux) WithDecoy(cp *compiler.CompiledProtocol) *ServerMux {
+	m.decoy = cp
+	return m
+}
+
+// WithShapeBuckets pads established-session frames to the next length
+// rung. Empty disables shaping (the default until the caller opts in).
+func (m *ServerMux) WithShapeBuckets(buckets []int) *ServerMux {
+	m.shapeBuckets = append([]int(nil), buckets...)
 	return m
 }
 
@@ -465,6 +542,9 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 		pkt := append([]byte(nil), msg.Payload...)
 		if tun.handleLossControl(pkt) {
 			tun.sessMu.Unlock()
+			m.mu.Lock()
+			m.noteFrameLen(len(data))
+			m.mu.Unlock()
 			return
 		}
 		due := tun.noteDecoded()
@@ -475,6 +555,9 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 			frame, ackErr = tun.sess.Encode(encodeAckPayload(base))
 		}
 		tun.sessMu.Unlock()
+		m.mu.Lock()
+		m.noteFrameLen(len(data))
+		m.mu.Unlock()
 		if ackErr == nil && due && len(frame) <= maxDatagram {
 			_, _ = tun.conn.WriteTo(frame, tun.peer) // best effort
 		}
@@ -486,7 +569,8 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 	if p == nil {
 		// Anti-probe guard: a new handshake needs a plausible first
 		// datagram, a per-address creation rate limit, and a global pending
-		// cap so junk traffic cannot exhaust memory.
+		// cap so junk traffic cannot exhaust memory. A full session table
+		// is the same as a closed door: drop, maybe decoy.
 		now := time.Now()
 		if len(data) < minFirstDatagram {
 			m.mu.Unlock()
@@ -498,6 +582,12 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 		}
 		if len(m.pending) >= maxPendingHandshakes {
 			m.mu.Unlock()
+			return
+		}
+		if m.maxSessions > 0 && len(m.established) >= m.maxSessions {
+			m.lastCreate[key] = now
+			m.mu.Unlock()
+			m.maybeDecoy(addr, data)
 			return
 		}
 		h, err := compiler.NewHandshake(m.cp, genome.DirServer, m.psk)
@@ -520,7 +610,8 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 }
 
 // advance feeds one datagram to one pending handshake and sends any outgoing
-// steps that become due. It never replies to invalid input.
+// steps that become due. Unauthenticated first packets may get a decoy
+// reply; later failures stay silent.
 func (m *ServerMux) advance(p *pendingHandshake, data []byte) {
 	p.mu.Lock()
 	spec, err := p.h.CurrentSpec()
@@ -542,12 +633,28 @@ func (m *ServerMux) advance(p *pendingHandshake, data []byte) {
 	}
 
 	if err := p.h.RecvStep(data); err != nil {
+		progressed := p.recvOK || p.last != nil
+		addr := p.addr
 		p.mu.Unlock()
-		return // wrong nonce / wrong step / probe: silent
+		if !progressed {
+			// First datagram did not authenticate: drop the empty
+			// pending slot (a real client's retransmission still
+			// succeeds on a fresh handshake at seq 0) and optionally
+			// answer with the decoy species.
+			m.abandonPending(addr)
+			m.maybeDecoy(addr, data)
+		}
+		return // wrong nonce / wrong step / probe: silent otherwise
 	}
+	p.recvOK = true
 	p.last = nil
 	p.attempts = 0
 	p.backoff = retransmitBase
+	p.mu.Unlock()
+	m.mu.Lock()
+	m.noteFrameLen(len(data))
+	m.mu.Unlock()
+	p.mu.Lock()
 
 	if p.h.Done() {
 		p.mu.Unlock()
@@ -631,6 +738,9 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 		closed:  make(chan struct{}),
 		limiter: newTokenBucket(m.rateLimit, m.rateLimit),
 	}
+	if len(m.shapeBuckets) > 0 {
+		tun.sess.SetShapeBuckets(m.shapeBuckets)
+	}
 	tun.lastActive.Store(time.Now().UnixNano())
 	tun.onClose = func() {
 		m.mu.Lock()
@@ -646,6 +756,11 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 		m.mu.Unlock()
 		return
 	}
+	if m.maxSessions > 0 && len(m.established) >= m.maxSessions {
+		m.mu.Unlock()
+		tun.Close()
+		return
+	}
 	m.established[key] = tun
 	m.mu.Unlock()
 
@@ -654,6 +769,15 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 	case <-m.closed:
 		tun.Close()
 	}
+}
+
+// abandonPending removes a handshake that never authenticated a client
+// step. lastCreate is kept so the per-address creation gap still applies.
+func (m *ServerMux) abandonPending(addr net.Addr) {
+	key := addr.String()
+	m.mu.Lock()
+	delete(m.pending, key)
+	m.mu.Unlock()
 }
 
 // Accept returns the next completed client session.

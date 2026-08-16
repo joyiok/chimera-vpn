@@ -36,7 +36,13 @@ type ChimeraApp struct {
 	cfg     appConfig
 	status  string // disconnected / connecting / connected / error
 	lastErr string
+
+	wdOnce sync.Once
 }
+
+// 失联判定阈值：keepalive 默认 25s 一个周期，3.5 个周期无任何入站帧视为
+// 链路死亡（NAT 超时 / 网络切换 / 服务器重启），触发自动重连。
+const linkLostAfter = 90 * time.Second
 
 // NewChimeraApp 创建后端应用实例。
 func NewChimeraApp() *ChimeraApp {
@@ -124,7 +130,41 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 	a.status = "connected"
 	a.lastErr = ""
 	a.mu.Unlock()
+	a.startWatchdog()
 	return nil
+}
+
+// startWatchdog 启动失联自动重连监督循环（幂等，随进程退出终止）。
+// 健康链路上 keepalive 每 25s 刷新入站活跃；超过 linkLostAfter 无任何
+// 入站帧说明五元组已死，重走完整 Start 流程（新握手、新 TUN 配置、
+// 路由接管重建；服务器轮换过 generation 时探测窗口自动跟上）。
+func (a *ChimeraApp) startWatchdog() {
+	a.wdOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				a.mu.Lock()
+				status := a.status
+				cfg := a.cfg
+				a.mu.Unlock()
+				if status != "connected" {
+					continue
+				}
+				idle := linkIdleFor()
+				if idle < linkLostAfter {
+					continue
+				}
+				log.Printf("[watchdog] 链路静默 %v，自动重连 server=%s", idle, cfg.ServerAddr)
+				a.mu.Lock()
+				a.status = "connecting"
+				a.mu.Unlock()
+				if err := a.Start(cfg.SeedHex, cfg.Generation, cfg.PSKHex, cfg.ServerAddr); err != nil {
+					log.Printf("[watchdog] 重连失败: %v", err)
+				}
+			}
+		}()
+	})
 }
 
 // Stop 停止传输层，但不会退出应用进程（GUI 保持运行）。

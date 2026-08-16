@@ -8,9 +8,10 @@
 //
 // gomobile bind -target=ios,iossimulator,macos -o ChimeraBind.xcframework chimera/bind
 //
-// The API is intentionally tiny: Start/Stop/Send/Receive. Mobile VpnService
-// and NEPacketTunnelProvider shells poll Receive on a worker thread and push
-// outbound IP packets through Send.
+// The API is intentionally tiny: Start/AssignedIP/Stop/Send/Receive/SocketFD.
+// Mobile VpnService and NEPacketTunnelProvider shells poll Receive on a
+// worker thread and push outbound IP packets through Send. Android must
+// call SocketFD after Start and VpnService.protect(fd) before establish().
 package bind
 
 import (
@@ -34,10 +35,11 @@ func Start(seedHex string, generation int64, pskHex string, serverAddr string) (
 		return 0, fmt.Errorf("generation must be >= 0")
 	}
 	c, err := core.NewClient(core.Config{
-		SeedHex:    seedHex,
-		Generation: uint64(generation),
-		PSKHex:     pskHex,
-		ServerAddr: serverAddr,
+		SeedHex:          seedHex,
+		Generation:       uint64(generation),
+		GenerationWindow: 2,
+		PSKHex:           pskHex,
+		ServerAddr:       serverAddr,
 	})
 	if err != nil {
 		return 0, err
@@ -99,4 +101,17 @@ func Receive(handle int64) ([]byte, error) {
 		return nil, fmt.Errorf("unknown handle %d", handle)
 	}
 	return c.ReceivePacket()
+}
+
+// SocketFD returns the UDP socket file descriptor for this handle so the
+// Android VpnService can call protect(fd) before establishing the TUN.
+// The fd is still owned by the Go client; do not close it.
+func SocketFD(handle int64) (int, error) {
+	mu.Lock()
+	c := clients[handle]
+	mu.Unlock()
+	if c == nil {
+		return -1, fmt.Errorf("unknown handle %d", handle)
+	}
+	return c.UDPFileDescriptor()
 }

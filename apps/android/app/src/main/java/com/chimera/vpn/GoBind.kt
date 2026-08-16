@@ -64,6 +64,17 @@ object GoBind {
 
     fun receive(handle: Long): ByteArray? = invokeStatic("receive", handle) as? ByteArray
 
+    fun socketFD(handle: Long): Int {
+        val result = invokeStatic("socketFD", handle)
+        return when (result) {
+            is Int -> result
+            is Long -> result.toInt()
+            is Number -> result.toInt()
+            null -> -1
+            else -> throw IllegalStateException("GoBind.socketFD 返回类型异常: ${result.javaClass.name}")
+        }
+    }
+
     private fun invokeStatic(methodName: String, vararg args: Any?): Any? {
         val clazz = loadClass()
             ?: throw IllegalStateException(ERROR_NOT_BUILT)
