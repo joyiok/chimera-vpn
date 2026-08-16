@@ -94,7 +94,10 @@ jobs:
 
       - name: Add MinGW to PATH
         shell: bash
-        run: echo "${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" >> "$GITHUB_PATH"
+        run: |
+          loc="${{ steps.msys2.outputs.msys2-location }}"
+          if [ -z "$loc" ]; then loc="C:/msys64"; fi
+          echo "$loc/mingw64/bin" >> "$GITHUB_PATH"
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
@@ -103,6 +106,7 @@ jobs:
         working-directory: apps/windows
         env:
           CGO_ENABLED: "1"
+          CC: gcc
         run: |
           gcc --version
           go mod tidy
@@ -146,4 +150,17 @@ jobs:
           cache: false
 
       - name: gobind -lang=java chimera/bind
-        run: go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind
+        run: |
+          # gobind prints the Java stubs then exits 1 because this module
+          # does not import golang.org/x/mobile/bind. The smoke test is the
+          # generated method signatures, not gobind's extra JNI compile step.
+          set +e
+          out=$(go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind 2>&1)
+          printf '%s\n' "$out"
+          set -e
+          printf '%s\n' "$out" | grep -F 'public static native long start('
+          printf '%s\n' "$out" | grep -F 'public static native long socketFD('
+          printf '%s\n' "$out" | grep -F 'public static native String assignedIP('
+          printf '%s\n' "$out" | grep -F 'public static native void send('
+          printf '%s\n' "$out" | grep -F 'public static native byte[] receive('
+          printf '%s\n' "$out" | grep -F 'public static native void stop('

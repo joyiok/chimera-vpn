@@ -15,8 +15,8 @@ func TestJitterDelayRange(t *testing.T) {
 	var sawPositive atomic.Bool
 	for i := 0; i < 64; i++ {
 		d := jitterDelay(max)
-		if d < 0 || d > max {
-			t.Fatalf("delay %v outside [0, %v]", d, max)
+		if d <= 0 || d > max {
+			t.Fatalf("delay %v outside (0, %v]", d, max)
 		}
 		if d > 0 {
 			sawPositive.Store(true)
@@ -24,6 +24,34 @@ func TestJitterDelayRange(t *testing.T) {
 	}
 	if !sawPositive.Load() {
 		t.Fatal("never drew a positive delay")
+	}
+}
+
+// TestJitterDelayIsSkewed: truncated exponential should pile up below
+// max/2, unlike a uniform draw (Wang et al. CCS 2015; obfs4 IAT mode).
+func TestJitterDelayIsSkewed(t *testing.T) {
+	max := 30 * time.Millisecond
+	const n = 400
+	below := 0
+	seen := map[time.Duration]struct{}{}
+	var sum time.Duration
+	for i := 0; i < n; i++ {
+		d := jitterDelay(max)
+		sum += d
+		seen[d] = struct{}{}
+		if d < max/2 {
+			below++
+		}
+	}
+	if len(seen) < 50 {
+		t.Fatalf("too little variation: %d distinct delays", len(seen))
+	}
+	if below < n*2/3 {
+		t.Fatalf("exponential IAT not skewed low: %d/%d below max/2", below, n)
+	}
+	mean := sum / n
+	if mean > max/2 {
+		t.Fatalf("mean %v should be well under max/2=%v", mean, max/2)
 	}
 }
 

@@ -53,7 +53,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 探测诱饵 | ✅ 完成 | 非法首包回 decoy 物种；限速+体积帽 |
 | 包长整形 | ✅ 完成 | 128/512/1024/1452 阶梯；无 pad 基因型跳过 |
 | Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；待真机 |
-| 时序抖动 | ✅ 完成 | `jitter_ms` 默认 20ms；测试默认关闭 |
+| 时序抖动 | ✅ 完成 | 截断指数 IAT，上限 20ms；对齐 obfs4/CCS 2015 |
 | 服务端 generation 窗口 | ✅ 完成 | 并行接受 gen…gen+N；client-first 可轮换 |
 | chimerad 生产运维 | ✅ 完成 | 单客户端断开不杀进程；TUN 地址幂等；`-check-config`；systemd 硬化 |
 

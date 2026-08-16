@@ -3,16 +3,19 @@ package tunnel
 import (
 	"crypto/rand"
 	"fmt"
+	"math"
 	"math/big"
 	"net"
 	"sync/atomic"
 	"time"
 )
 
-// DefaultJitterMax is the production send-side timing smear. Uniform delay
-// in [0, DefaultJitterMax] on every datagram makes inter-packet gaps less
-// of a constant fingerprint. Tests and library callers leave JitterMax at
-// 0 (off) unless they opt in; chimerad enables this by default.
+// DefaultJitterMax is the production send-side timing smear. Inter-arrival
+// delays are a truncated exponential in (0, DefaultJitterMax], matching the
+// obfs4/ScrambleSuit lesson that a *uniform* IAT is itself a classifier
+// feature (Wang et al., CCS 2015; Fifield, FOCI 2020). Tests and library
+// callers leave JitterMax at 0 (off) unless they opt in; chimerad enables
+// this by default.
 const DefaultJitterMax = 20 * time.Millisecond
 
 // MaxJitterMax rejects misconfiguration that would stall the data plane.
@@ -34,16 +37,27 @@ func applyJitter(max time.Duration) {
 	time.Sleep(d)
 }
 
-// jitterDelay returns a uniformly random duration in [0, max].
+// jitterDelay samples a truncated-exponential inter-arrival delay in
+// (0, max]. Mean is max/3 so most gaps stay short with a long tail.
+// A zero draw is replaced by 1ns so applyJitter actually runs when
+// jitter is enabled (uniform-inclusive-zero used to skip the sleeper).
 func jitterDelay(max time.Duration) time.Duration {
 	if max <= 0 {
 		return 0
 	}
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)+1))
+	n, err := rand.Int(rand.Reader, big.NewInt(1<<53))
 	if err != nil {
-		return 0
+		return max / 3
 	}
-	return time.Duration(n.Int64())
+	u := float64(n.Int64()+1) / float64(int64(1)<<53)
+	d := -math.Log(u) * float64(max) / 3
+	if d > float64(max) {
+		d = float64(max)
+	}
+	if d < 1 {
+		d = 1
+	}
+	return time.Duration(d)
 }
 
 // writeDatagram smears timing then sends one UDP payload. The caller must

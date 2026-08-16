@@ -10,6 +10,17 @@ import (
 	"chimera/internal/genome"
 )
 
+func TestDecoyGenerationMissesClientWindow(t *testing.T) {
+	for gen := uint64(0); gen < 16; gen++ {
+		d := DecoyGeneration(gen)
+		for w := uint64(0); w <= 2; w++ {
+			if d == gen+w {
+				t.Fatalf("decoy generation %d collides with live window gen+%d=%d", d, w, gen+w)
+			}
+		}
+	}
+}
+
 func TestAllowDecoySize(t *testing.T) {
 	if allowDecoySize(10, 40) {
 		t.Fatal("3x amplification must be rejected")

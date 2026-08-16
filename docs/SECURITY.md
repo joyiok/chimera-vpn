@@ -16,10 +16,13 @@
 
 ## 已知缺口
 
-1. **流量分析**：包长已按 128/512/1024/1452 阶梯整形；发送时序有均匀抖动（默认 ≤20ms），
-   长连接统计特征仍在，不是完整流量变形。
-2. **主动探测**：client-first 非法首包回 decoy 物种；server-first 对 knock 仍发真实首帧。
-   generation 窗口对 client-first 可并行；server-first knock 只绑定基代。
+1. **流量分析**：包长已按 128/512/1024/1452 阶梯整形；发送 IAT 为截断指数分布
+   （默认 ≤20ms）。均匀间隔本身会被分类器当特征（Wang et al., CCS 2015
+   *Seeing through Network-Protocol Obfuscation*；obfs4 IAT mode）。
+   长连接方向模式仍在，不是 Marionette/完整流量变形。
+2. **主动探测**：client-first 非法首包回 decoy 物种（UPGen §2.1 对 active
+   scanning 的有限防护；obfs4 要先证明共享秘密才说话）。server-first knock
+   仍发真实首帧。generation 窗口对 client-first 可并行。
 3. **重放**：序列号防了即时重放；会话密钥来自临时 ECDH，跨重启录制数据面无效。
    没有跨重启的握手账本（依赖 pending 限速）。
 4. **丢包恢复**：ACK/SKIP 推进窗口（跳过语义，不重传）；上层协议自带可靠性。
@@ -40,7 +43,12 @@ systemd 硬化）已按自建 VPN 生产要求收紧；**不要把它当成在�
 - 地址池分配/释放。
 - 全部竞态检测：`go test -race ./...`。
 
-## 报告问题
+## 参考文献（实现时对照）
+
+- Wails, Jansen, Johnson, Sherr. *Censorship Evasion with Unidentified Protocol Generation*. USENIX Security 2025. 本仓库的协议生成路线。
+- Wang, Dyer, et al. *Seeing through Network-Protocol Obfuscation*. CCS 2015. 均匀包长/IAT 可被决策树打掉。
+- Dyer et al. *Marionette*. USENIX Security 2015；obfs4 IAT mode：非均匀间隔。
+- Fifield. *Turbo Tunnel*. FOCI 2020. 可靠性层与混淆层分离（本仓库 ACK/SKIP 是跳过而非重传）。
 
 先在仓库提 Issue，附带：
 - 平台/Go 版本

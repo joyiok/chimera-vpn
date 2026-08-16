@@ -97,8 +97,8 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 探测诱饵：`WithDecoy` 对未认证首包回另一种子协议帧；体积不超过探测包的 3 倍且
   ≤1200 字节，全局 ≤32 帧/秒。`disable_decoy` 关闭。
 - 包长整形：应用记录按 128/512/1024/1452 阶梯垫高（超出末档不垫，避免 UDP 分片）。
-- 时序抖动：发送路径均匀延迟 `[0, jitter_ms]`（chimerad 默认 20ms）；ACK/keepalive
-  异步发送，避免卡住多路复用读循环。
+- 时序抖动：发送路径截断指数 IAT，上限 `jitter_ms`（chimerad 默认 20ms）；ACK/keepalive
+  异步发送，避免卡住多路复用读循环。均匀 IAT 会被当指纹，故不用均匀分布。
 - 服务端 generation 窗口：并行编译 `generation … generation+window`（默认 window=2）。
   client-first 首包对窗口内每一代做 RecvStep，命中即绑定该代；server-first 的
   knock 仍只绑定基代（knock 无法携带代号）。客户端 `GenerationWindow` 在超时后探测 gen+1…。
