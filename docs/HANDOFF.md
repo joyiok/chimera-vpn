@@ -46,6 +46,9 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ✅ 完成 | ACK/SKIP 控制载荷；`-race` 测试含丢卡恢复用例 |
 | CI | ✅ 完成 | `.github/workflows/ci.yml`（根模块 + Windows 子模块 + gobind 冒烟） |
+| ChaCha20-Poly1305 | ✅ 完成 | `cipher` 配置强制覆盖；端到端 + 不匹配拒连测试 |
+| 握手重放防护 | ✅ 完成 | 流模式 64 序号位图，录制重放被拒 |
+| NAT keepalive / 空闲回收 / 限速 | ✅ 完成 | `keepalive_sec`/`idle_timeout_sec`/`rate_limit_kbps` 配置 |
 
 ## 接手后先做什么
 

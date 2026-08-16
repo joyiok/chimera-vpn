@@ -62,11 +62,14 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 - 参考：Balboa、Stegozoa。
 - 切入：新增 `internal/lanec/`，平台壳集成。
 
-## 8. 安全加固
+## 8. 安全加固（部分完成）
 
-- ChaCha20-Poly1305 接入 `internal/compiler`。
-- 握手重放窗口（每方向记录已见 nonce 位图）。
-- 服务端每会话限速与连接配额。
+- ~~ChaCha20-Poly1305 接入 `internal/compiler`~~ ✅（`GenerateWithCipher` 强制覆盖 +
+  `core.Config.Cipher`；两端一致才可握手）
+- ~~握手重放窗口~~ ✅（流模式 64 序号位图，跳跃判死整段；见 PROTOCOL.md 第 4 节）
+- ~~服务端每会话限速~~ ✅（`WithRateLimit` 令牌桶；连接配额仍缺）
+- ~~NAT keepalive + 空闲会话回收~~ ✅（生产存活硬需求：`ControlKeepalive` 0x04、
+  `WithIdleTimeout`；客户端 `SetKeepalive`）
 - 包长/时序整形（先做包长分布统计工具）。
 - 密钥轮换协议（genome generation 自动切换）。
 

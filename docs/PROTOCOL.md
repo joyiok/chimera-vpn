@@ -10,7 +10,9 @@
 - 每个消息的加密字段池：`key_material` / `certificate` / `extra` / `pad_length`
 - 长度字段：宽度 `u8/u16/u24/u32`、大小端、语义 `ciphertext|record`、位置、是否单独分段
 - padding 策略：`none` / `uniform[min,max]` / `burst`
-- 密码套件：`aes-128-gcm` / `aes-192-gcm` / `aes-256-gcm`（协议级同一种）
+- 密码套件：`aes-128-gcm` / `aes-192-gcm` / `aes-256-gcm`（协议级同一种）；
+  另可用 `GenerateWithCipher` 显式强制 `chacha20-poly1305`（移动端无 AES 硬件加速时），
+  强制不改变其余设计选择（cipher 抽签照常消费 DRBG），两端必须一致
 
 JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是设计指纹。
 
@@ -45,7 +47,8 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 
 - AEAD nonce 12 字节 = `uint32(message index) BE || uint64(sequence) BE`。
 - 同一 bootstrap 方向密钥会被多个握手消息复用，因此 message index 必须参与 nonce。
-- 流模式严格递增；解码失败不推进序号。
+- 流模式（握手帧）：接收端在 `[seq, seq+64)` 窗口内尝试 nonce，命中后经 64 位重放
+  位图去重；重复帧与低于窗口基线的帧拒绝，跳跃 64+ 视为放弃整段跳过区间（防录制重放）。
 - 包模式发送端独立递增 `packetSend`；接收端在 `[base, base+8192)` 窗口内逐个尝试 nonce，
   命中后置 seen 位，**连续 seen 才推进 base**（允许 IP 包乱序）。
 - 丢包恢复（见下节）：ACK 推进连续位置，SKIP 越过永久缺口，base 不会再永久停滞。
@@ -53,7 +56,12 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 ## 5. 控制包、地址分配与丢包恢复
 
 - 应用载荷首字节 `0x01` = `ControlAssignIP`；其余字节为分配的 IPv4 字符串。
-- IP 包首字节必为 `0x4x`（IPv4）或 `0x6x`（IPv6），不会与 `0x01`-`0x03` 冲突。
+- IP 包首字节必为 `0x4x`（IPv4）或 `0x6x`（IPv6），不会与 `0x01`-`0x04` 冲突。
+- `0x04 = ControlKeepalive`（1 字节载荷）：链路静默超过一个间隔（默认 25s，低于常见
+  30s NAT 超时）后由 keepalive 泵发送，刷新 NAT/防火墙的 UDP 五元组映射。客户端
+  `PacketTunnel.SetKeepalive` 配置；服务端由 mux 定时器对空闲会话发送，并可按
+  `idle_timeout` 回收死会话、按 `rate_limit` 对每会话入口字节限速（令牌桶，超限帧
+  按普通丢包处理）。
 - 服务端 `Accept` 握手完成后立即发送控制包，然后才进入正常数据转发。
 - 客户端 `PacketTunnel.WaitControl` 自行读 socket（因为平台此时还没启动泵），
   期间遇到的数据包进入 256 深度的 `data` 队列，`ReceivePacket` 优先取该队列。
@@ -87,7 +95,9 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 
 ## 7. 密码学边界
 
-- 只实现 AES-GCM（Go 标准库）；ChaCha20-Poly1305 在枚举中未接入。
+- AES-GCM（Go 标准库）与 ChaCha20-Poly1305（`golang.org/x/crypto`）均已接入；
+  基因组默认只在 AES 三档中抽签，ChaCha 通过 `cipher` 配置显式强制。
 - 握手前字段用 PSK bootstrap 加密；临时 ECDH 提供前向保密。
-- 没有握手重放窗口（序列号存在，但历史 nonce 未持久化检查）。
+- 握手帧有 64 序号重放位图（流模式解码路径）；录制重放的握手帧会被拒绝。
 - `EstimatedEntropyBits` 只是生成器自记账，不是安全证明。
+- 尚未实现：包长/时序整形、密钥轮换（genome generation 自动切换）。

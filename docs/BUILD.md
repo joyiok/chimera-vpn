@@ -36,8 +36,18 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
   "generation": 0,
   "psk_hex": "...",
   "client_cidr": "10.99.0.0/24",
+  "cipher": "",
+  "keepalive_sec": 25,
+  "idle_timeout_sec": 180,
+  "rate_limit_kbps": 0,
   "tun": {"name":"chimera0","address":"10.99.0.1/24","mtu":1400}
 }
+
+# cipher: 空串 = 基因组默认（AES 档抽签）；"chacha20-poly1305" 强制 ChaCha
+#         （客户端配置必须一致，否则握手失败）。客户端同样支持 cipher 字段。
+# keepalive_sec: 0 = 默认 25s（防 NAT 超时），负数禁用
+# idle_timeout_sec: 空闲会话回收阈值，0 = 不回收
+# rate_limit_kbps: 每客户端入口限速（KiB/s），0 = 不限速
 
 # 运行（需 root 或 CAP_NET_ADMIN）
 sudo ./dist/chimerad -config /etc/chimera/server.json
