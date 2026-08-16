@@ -41,11 +41,11 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | UDP 多客户端复用 | ✅ 完成 | 3 客户端并发测试 |
 | 地址自动分配 | ✅ 完成 | `10.99.0.0/24` 池测试 |
 | Linux 服务端 | ✅ 代码完成 | 编译/静态检查；TUN 需 root 实机 |
-| Windows GUI | ✅ 控制面 + Wintun 包泵 | Linux 上交叉编译到 Windows 通过 |
+| Windows GUI | ✅ 控制面 + Wintun 包泵 + 默认路由接管 | Linux 上交叉编译到 Windows 通过；路由需真机验收 |
 | Android/iOS | ⚠️ 源码骨架 | 未真机构建 |
-| Windows 默认路由接管 | ❌ 未做 | 见 ROADMAP.md 第一项 |
+| Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ❌ 未做 | packet 窗口 8192，无 ACK 推进 |
-| CI | ❌ 未做 | 建议第一个基础设施任务 |
+| CI | ✅ 完成 | `.github/workflows/ci.yml`（根模块 + Windows 子模块 + gobind 冒烟） |
 
 ## 接手后先做什么
 
@@ -57,7 +57,8 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
    - `docs/PROTOCOL.md`（线上格式与密码学）
    - `docs/BUILD.md`（各平台构建）
    - `docs/ROADMAP.md`（下一步与实现提示）
-5. 从 ROADMAP 的 **任务 1：Windows 默认路由接管** 开始。
+5. 从 ROADMAP 的 **任务 3：长期丢包恢复（packet ACK）** 开始；若在 Windows 真机旁，
+   先验收任务 1 的路由接管（`route print -4`）。
 
 ## 提交规范
 

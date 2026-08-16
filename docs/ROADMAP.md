@@ -2,39 +2,24 @@
 
 优先级从上到下。每一项都写了建议的切入文件。
 
-## 1. Windows 默认路由接管（当前最优先）
+## 1. ~~Windows 默认路由接管~~（已完成，待真机验收）
 
-**现状**：Wintun 已能收发包，但系统流量是否走 Chimera0 取决于用户手工路由。
+**实现**：`apps/windows/internal/bridge/route.go`（纯逻辑，跨平台可测）+
+`route_windows.go`（GetAdaptersAddresses + netsh）。
 
-**要做**：
-- `0.0.0.0/0`（或 0/1 + 128/1）经 Chimera0，下一跳 `10.99.0.1`
-- **服务器 IP/32 例外路由**走原物理网关，否则隧道自环
-- 关闭时恢复原路由
+- `0.0.0.0/1` + `128.0.0.0/1` 经 Chimera 走 `10.99.0.1`（半默认路由，比任何真实默认路由更精确，无需改 metric）
+- 服务器 IP `/32` 例外路由走选出的物理网卡（优先含服务器 IP 的同子网卡，否则 metric 最优网关卡）
+- 所有路由 `store=active`：崩溃最坏留一条 /32 例外，重启即清，绝不持久劫持
+- `Release()` 对称删除；安装失败自动回滚已装路由
+- 路由接管失败按**非致命**处理（隧道仍可用，日志提示手工路由）
 
-**切入文件**：`apps/windows/internal/bridge/bridge_windows.go`
-
-**实现提示**：
-- 用 `golang.org/x/sys/windows.GetAdaptersAddresses`（`GAA_FLAG_INCLUDE_GATEWAYS`）
-  找到物理网卡 `FriendlyName`、`FirstGatewayAddress`。
-- 用 `netsh interface ipv4 add route prefix=0.0.0.0/0 interface="Chimera" nexthop=10.99.0.1 metric=5 store=active`。
-- 服务器例外：`prefix=<serverIP>/32 interface="<物理网卡>" nexthop=<物理网关> metric=1 store=active`。
-- `Bridge.Close()` 对称执行 `netsh ... delete route`。
-- 服务器 IP 从 `core.Config.ServerAddr` 解析（`net.LookupHost`）。
-- 更稳的长期方案：升级 `golang.org/x/sys` 到含 IP Helper 路由结构的新版本，或引入
-  `golang.zx2c4.com/wireguard/windows/tunnel/winipcfg`。
-
-**验收**：管理员运行客户端后，`route print -4` 显示 Chimera0 默认路由 + 服务器例外；
+**待真机验收**：管理员运行客户端后 `route print -4` 显示两条半默认路由 + 服务器例外；
 断开后路由恢复；浏览器出口 IP 变为服务器 IP。
 
-## 2. GitHub Actions CI
+## 2. ~~GitHub Actions CI~~（已完成）
 
-**要做**：
-- 根模块：`go test -race ./...`、`go vet ./...`、gofmt 检查。
-- Windows 子模块：`go test ./...` 与 `go test -tags with_transport ./...`、
-  `GOOS=windows go build -tags with_transport ./...`。
-- 可选：`gobind -lang=java` 冒烟。
-
-**切入文件**：`.github/workflows/ci.yml`（新建）
+`.github/workflows/ci.yml`：根模块 fmt/vet/test-race/build、Windows 子模块双标签
+test/vet + amd64 交叉编译、gobind Java 签名冒烟。
 
 ## 3. 长期丢包恢复（packet ACK）
 
