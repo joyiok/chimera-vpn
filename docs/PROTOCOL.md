@@ -26,6 +26,20 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 +---------------------------+--------------------------------------+
 ```
 
+**UDP 握手数据报**在内层帧之前再加一层物种封面（不进入 transcript / AEAD）：
+
+```text
++---------------------------+--------------------------------------+
+| 随机可打印 ASCII 封面      |  上图内层握手帧                        |
+| CoverLen = 24..32（按指纹） |                                      |
++---------------------------+--------------------------------------+
+```
+
+封面长度由 `ProtocolFingerprint` 派生（不消耗基因组 DRBG），内容每次发送用 `crypto/rand` 重抽，避免“每服务器固定 magic”。
+这是为了命中 Wu et al., USENIX Security 2023（gfw.report）推断的 GFW
+全加密流量检测器豁免规则 Ex2（前 6 字节可打印 ASCII）和 Ex4（超过 20 字节连续可打印）。
+流模式 `EncodeStep` / `ReadFrame` **不加**封面。应用数据报不加封面（该检测器只看流的首个 payload）。
+
 - 明文区包含 length 字段；**length 是 AEAD 的 AAD**，所以必须在加密前确定。
 - 长度语义：
   - `ciphertext`：值为密文字节数（解析时先读完所有明文字段再校验）
@@ -88,10 +102,18 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 
 ## 6. 抗探测行为（当前实现）
 
+对照 [gfw.report](https://gfw.report/)：Wu et al. USENIX Security 2023
+（被动全加密检测）与 Alice et al. IMC 2020（Shadowsocks 主动探测）。
+
+- UDP 握手首包（及所有握手数据报）带物种级随机可打印封面，使推断的 FEP 检测器
+  Ex2/Ex4 命中；封面不是 TLS/HTTP 指纹（避免掉进 Ex5 再走 HTTP/TLS DPI）。
 - 所有非法/错 nonce/错步骤的握手数据报：**静默丢弃**；client-first 的未认证首包
-  可改回 decoy 物种的一帧（见下）。
-- server-first 模式需要客户端先发一个 32 字节随机 knock；服务器只把来源地址记下并
-  发送真实首帧（与探针不可分）。
+  可改回 decoy 物种的一帧（decoy 同样带该诱饵物种的封面）。
+- server-first：客户端先发 `cover || nonce32 || HMAC-SHA256(PSK, "chimera-pgc/0/knock"||nonce)[:16]`。
+  校验失败则不发送真实首帧（不再把任意 knock 当确认预言机）。
+- 已认证握手首包 / knock 的 SHA-256 记入约 1 小时、最多 65536 条的重放表；
+  跨地址的相同内层重放（IMC 2020 R1）不再完成第二次握手。字节级篡改的重放
+  （R2–R5）仍被 AEAD 拒绝。
 - 新会话创建防护：首包 ≥16 字节、同源地址 1s 限速、全局 pending ≤1024、
   已建立会话 `max_sessions`（chimerad 默认 256）。
 - 探测诱饵：`WithDecoy` 对未认证首包回另一种子协议帧；体积不超过探测包的 3 倍且
@@ -100,9 +122,9 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 时序抖动：发送路径截断指数 IAT，上限 `jitter_ms`（chimerad 默认 20ms）；ACK/keepalive
   异步发送，避免卡住多路复用读循环。均匀 IAT 会被当指纹，故不用均匀分布。
 - 服务端 generation 窗口：并行编译 `generation … generation+window`（默认 window=2）。
-  client-first 首包对窗口内每一代做 RecvStep，命中即绑定该代；server-first 的
+  client-first 首包对窗口内每一代做封面剥离 + RecvStep，命中即绑定该代；server-first 的
   knock 仍只绑定基代（knock 无法携带代号）。客户端 `GenerationWindow` 在超时后探测 gen+1…。
-- 尚未实现：端口跳跃、车道 B/C、跨重启持久重放账本。
+- 尚未实现：端口跳跃、车道 B/C、跨重启持久重放账本（进程内表，重启后清空）。
 
 ## 7. 密码学边界
 
@@ -110,6 +132,7 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
   基因组默认只在 AES 三档中抽签，ChaCha 通过 `cipher` 配置显式强制。
 - 握手前字段用 PSK bootstrap 加密；临时 ECDH 提供前向保密。
 - 握手帧有 64 序号重放位图（流模式解码路径）；录制重放的握手帧会被拒绝。
+- 数据报握手另有内层首包/knock 哈希表，挡住跨连接的相同首包重放。
 - `EstimatedEntropyBits` 只是生成器自记账，不是安全证明。
 - 密钥轮换：服务端并行接受 generation 窗口；客户端探测 gen+1…。server-first
   基因型在窗口内仍只回答基代 knock。

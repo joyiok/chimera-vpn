@@ -2,7 +2,8 @@
 
 > 仓库：https://github.com/joyiok/chimera-vpn
 > 分支：`main`（Public）
-> 状态：可编译、可测试的研究型原型，**不是生产 VPN**。
+> 状态：可编译、可测试的研究型原型；数据面与守护进程已按自建 VPN 收紧，**不是**已验证的抗 GFW 产品。
+> 睡醒后从 [DEPLOY.md](DEPLOY.md) 跑服务端 + 下 Windows artifact。
 
 ## 10 分钟快速了解
 
@@ -56,6 +57,9 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 时序抖动 | ✅ 完成 | 截断指数 IAT，上限 20ms；对齐 obfs4/CCS 2015 |
 | 服务端 generation 窗口 | ✅ 完成 | 并行接受 gen…gen+N；client-first 可轮换 |
 | chimerad 生产运维 | ✅ 完成 | 单客户端断开不杀进程；TUN 地址幂等；`-check-config`；systemd 硬化 |
+| FEP 握手封面 | ✅ 完成 | 随机可打印前缀 24–32 字节；Wu et al. USENIX Sec 2023 Ex2/Ex4 |
+| 认证 knock | ✅ 完成 | server-first 需 PSK-MAC；随机探针不再拿到真实首帧 |
+| 握手重放表 | ✅ 完成 | 已认证首包/knock SHA-256；IMC 2020 同类重放不建第二会话 |
 
 ## 接手后先做什么
 
@@ -69,7 +73,8 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
    - `docs/ROADMAP.md`（下一步与实现提示）
 5. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或车道 B/C 开始；
    若在 Windows 真机旁，先验收路由接管（`route print -4`）。
-   生产部署：`chmod 0600` 配置、`chimerad -check-config`、`deploy/chimerad.service`。
+   生产部署：`chmod 0600` 配置、`chimerad -check-config`、`deploy/chimerad.service`；
+   一页操作见 [DEPLOY.md](DEPLOY.md)。
 
 ## 提交规范
 
@@ -88,5 +93,6 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 - [ARCHITECTURE.md](ARCHITECTURE.md) —— 代码地图、数据流、核心 API
 - [PROTOCOL.md](PROTOCOL.md) —— 线上协议、帧格式、握手、密码学
 - [BUILD.md](BUILD.md) —— 各平台构建/运行/真机联调
+- [DEPLOY.md](DEPLOY.md) —— 服务端 + Windows 客户端一页部署
 - [ROADMAP.md](ROADMAP.md) —— 现状与下一步实现提示
 - [SECURITY.md](SECURITY.md) —— 威胁模型与已知限制

@@ -59,6 +59,7 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
 # generation_window: 额外接受 gen..gen+N（省略 = 2，0 = 只接受配置的 generation）
 # 校验配置：chimerad -config /etc/chimera/server.json -check-config
 # 配置文件权限建议 0600（含 PSK）
+# 一页部署：docs/DEPLOY.md
 
 # 运行（需 root 或 CAP_NET_ADMIN）
 sudo ./dist/chimerad -config /etc/chimera/server.json

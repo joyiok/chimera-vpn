@@ -49,7 +49,7 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 **实现**：`internal/tunnel/decoy.go` + `ServerMux.WithDecoy`。非法首包（client-first
 模式 RecvStep 失败）用 `generation XOR 0xC0DEC0DEC0DEC0DE` 生成的第二种协议回一帧；
 源地址 1s 间隙 + 全局 32 帧/秒 + 体积 ≤ min(1200, 3×探测包) 防放大。
-`disable_decoy` 可关。server-first 的 knock 仍发真实首帧（与合法客户端不可分）。
+`disable_decoy` 可关。server-first 需要 PSK-MAC knock，随机探针不再拿到真实首帧。
 
 ## 6. 车道 B：CDN/直播广播下行
 
@@ -79,6 +79,9 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
   不用均匀间隔）
 - ~~密钥轮换协议~~ ✅（服务端 `GenerationWindow` 并行接受 gen…gen+N；客户端超时探测。
   server-first knock 仍绑定基代，见 PROTOCOL.md）
+- ~~GFW 全加密启发式（gfw.report / Wu 2023）~~ ✅（握手数据报随机可打印封面 Ex2/Ex4；
+  不模仿 TLS/HTTP）
+- ~~主动探测确认预言机（IMC 2020）~~ ✅（认证 knock + 已认证首包重放表）
 
 ## 9. 多机/分布式部署
 

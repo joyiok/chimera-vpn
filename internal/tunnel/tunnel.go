@@ -6,7 +6,6 @@ package tunnel
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -511,7 +510,7 @@ func ServerHandshake(conn net.PacketConn, h *compiler.Handshake) (net.Addr, *com
 //   - when it is the local role's turn to receive, wait silently, dropping
 //     every datagram that does not authenticate under the expected step;
 //   - while waiting, retransmit the last sent frame with exponential backoff;
-//   - a client whose first step is a receive sends one random "knock" so
+//   - a client whose first step is a receive sends an authenticated knock so
 //     server-first handshake patterns have a peer address to answer.
 func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isClient bool, jitter time.Duration) (net.Addr, error) {
 	var last []byte
@@ -525,15 +524,10 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 
 		if spec.Direction == h.Role() {
 			if peer == nil {
-				// Server-first pattern: wait for any datagram so we have an
-				// address. The client sends one random knock for exactly this
-				// purpose; malformed probe data only supplies an address and
-				// is never answered with an error.
-				if err := conn.SetReadDeadline(time.Now().Add(handshakeTimeout)); err != nil {
-					return nil, err
-				}
-				buf := make([]byte, maxDatagram)
-				_, addr, err := conn.ReadFrom(buf)
+				// Server-first: wait for an authenticated knock. Random
+				// probes (Alice, IMC 2020) must not elicit the real first
+				// frame — that was a confirmation oracle.
+				addr, err := waitAuthenticatedKnock(conn, h, handshakeTimeout)
 				if err != nil {
 					return nil, err
 				}
@@ -544,7 +538,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 				return nil, err
 			}
 			last = append(last[:0], frame...)
-			if err := writeDatagram(conn, peer, frame, jitter); err != nil {
+			if err := writeDatagram(conn, peer, h.WrapDatagram(frame), jitter); err != nil {
 				return nil, err
 			}
 			sentOnce = true
@@ -552,13 +546,15 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 		}
 
 		// Incoming step. A client in a server-first pattern has nothing to
-		// retransmit yet; one random knock gives the server an address.
+		// retransmit yet; an authenticated knock gives the server an address
+		// without looking like a fully-encrypted first payload.
 		if isClient && !sentOnce {
-			knock := make([]byte, 32)
-			if _, err := rand.Read(knock); err != nil {
+			knock, err := h.EncodeKnock()
+			if err != nil {
 				return nil, err
 			}
-			if err := writeDatagram(conn, peer, knock, jitter); err != nil {
+			last = append(last[:0], knock...)
+			if err := writeDatagram(conn, peer, h.WrapDatagram(knock), jitter); err != nil {
 				return nil, err
 			}
 			sentOnce = true
@@ -577,7 +573,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 				var ne net.Error
 				if errors.As(err, &ne) && ne.Timeout() {
 					if last != nil && peer != nil {
-						if werr := writeDatagram(conn, peer, last, jitter); werr != nil {
+						if werr := writeDatagram(conn, peer, h.WrapDatagram(last), jitter); werr != nil {
 							return nil, werr
 						}
 					}
@@ -592,7 +588,11 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 			if peer != nil && addr.String() != peer.String() {
 				continue
 			}
-			if err := h.RecvStep(buf[:n]); err != nil {
+			inner, uerr := h.UnwrapDatagram(buf[:n])
+			if uerr != nil {
+				continue
+			}
+			if err := h.RecvStep(inner); err != nil {
 				continue // silent drop: wrong nonce, wrong step, or a probe
 			}
 			if peer == nil {
@@ -610,4 +610,35 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 		return nil, errors.New("handshake completed without a peer address")
 	}
 	return peer, nil
+}
+
+// waitAuthenticatedKnock reads datagrams until one unwraps to a knock MAC
+// under this handshake's PSK. Unauthenticated probes stay unanswered.
+func waitAuthenticatedKnock(conn net.PacketConn, h *compiler.Handshake, timeout time.Duration) (net.Addr, error) {
+	deadline := time.Now().Add(timeout)
+	buf := make([]byte, maxDatagram)
+	for {
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			return nil, fmt.Errorf("knock: %w", ErrHandshakeTimeout)
+		}
+		if err := conn.SetReadDeadline(time.Now().Add(remain)); err != nil {
+			return nil, err
+		}
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				return nil, fmt.Errorf("knock: %w", ErrHandshakeTimeout)
+			}
+			return nil, err
+		}
+		inner, err := h.UnwrapDatagram(buf[:n])
+		if err != nil {
+			continue
+		}
+		if h.VerifyKnock(inner) {
+			return addr, nil
+		}
+	}
 }

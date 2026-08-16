@@ -41,12 +41,13 @@ func TestDecoyRepliesToClientFirstProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wire := compiler.WrapHandshakeDatagram(dcp.Genome, frame)
 	probe := make([]byte, 512)
 	for i := range probe {
 		probe[i] = 0x41
 	}
-	if !allowDecoySize(len(probe), len(frame)) {
-		t.Fatalf("decoy frame %d bytes too large for 512-byte probe; pick another seed", len(frame))
+	if !allowDecoySize(len(probe), len(wire)) {
+		t.Fatalf("decoy frame %d bytes too large for 512-byte probe; pick another seed", len(wire))
 	}
 
 	serverConn, err := net.ListenPacket("udp", "127.0.0.1:0")

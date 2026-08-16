@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"chimera/core"
+	"chimera/internal/compiler"
+	"chimera/internal/genome"
 	"chimera/internal/tun"
 )
 
@@ -53,8 +55,21 @@ func main() {
 	coreCfg = normalized
 
 	if *checkConfig {
-		fmt.Printf("config ok listen=%s generation=%d window=%d jitter=%s sessions=%d\n",
-			coreCfg.ServerAddr, coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax, coreCfg.MaxSessions)
+		seed, err := parseHex(coreCfg.SeedHex)
+		if err != nil {
+			fatal(err)
+		}
+		g, err := genome.GenerateWithCipher(seed, coreCfg.Generation, coreCfg.Cipher)
+		if err != nil {
+			fatal(fmt.Errorf("generate genome: %w", err))
+		}
+		fp := g.ProtocolFingerprint
+		if len(fp) > 16 {
+			fp = fp[:16]
+		}
+		fmt.Printf("config ok listen=%s generation=%d window=%d jitter=%s sessions=%d genome=%s cover_len=%d\n",
+			coreCfg.ServerAddr, coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax, coreCfg.MaxSessions,
+			fp, compiler.CoverLen(g))
 		return
 	}
 
