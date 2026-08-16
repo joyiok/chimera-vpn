@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 )
@@ -30,3 +31,13 @@ func sendPacket(ipPacket []byte) error {
 func receivePacket() ([]byte, error) {
 	return nil, errors.New("transport not compiled: rebuild with -tags with_transport")
 }
+
+func getAssignedIP(ctx context.Context) (string, error) {
+	return "", errors.New("transport not compiled: rebuild with -tags with_transport")
+}
+
+func startPacketBridge(ip string) error {
+	return errors.New("transport not compiled: rebuild with -tags with_transport")
+}
+
+func stopPacketBridge() {}

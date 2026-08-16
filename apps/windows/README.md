@@ -247,3 +247,13 @@ client.Close() error
 ### Q6：`wails build -m` 中的 `-m` 是什么？
 Wails CLI 的 `-m`/`--skipmodtidy` 选项会跳过编译前的 `go mod tidy`。
 当 `chimera/core` 尚未合并导致 tidy 无法解析该包时使用；合并后不必加 `-m`。
+
+---
+
+## 6. 数据面状态（务必阅读）
+
+- `with_transport` 构建现在会完成完整链路：
+  CHIMERA UDP 握手 -> 服务器自动分配地址 -> Wintun 创建虚拟网卡 -> netsh 配置地址/DNS -> 双向包泵（TUN<->core）。
+- 构建前请把 `wintun.dll` 放到 `ChimeraClient.exe` 同目录（可从 WireGuard 官方发布包提取），并以管理员身份运行。
+- **尚未完成**：Windows 默认路由接管（`0.0.0.0/0` 路由到 Chimera0、服务器地址例外路由）。当前版本虚拟网卡与核心连通，但系统流量是否走隧道取决于 Windows 路由表。
+- 生产发布前还需要处理：Wintun 驱动签名、代码签名、自动提权/UAC manifest。

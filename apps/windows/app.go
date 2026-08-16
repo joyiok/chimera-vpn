@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // DefaultServerAddr 是 SelectServerDefault 返回的默认服务器地址。
@@ -23,6 +24,7 @@ type appConfig struct {
 	Generation uint64 `json:"generation"`
 	PSKHex     string `json:"pskHex"`
 	ServerAddr string `json:"serverAddr"`
+	TunIP      string `json:"tunIP"` // fallback when the server has no client_cidr
 }
 
 // ChimeraApp 是 Wails 绑定的后端结构体。
@@ -78,6 +80,7 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 		Generation: generation,
 		PSKHex:     pskHex,
 		ServerAddr: serverAddr,
+		TunIP:      "10.99.0.2",
 	}
 
 	a.mu.Lock()
@@ -93,11 +96,26 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 	}
 
 	// 若已有旧连接，先优雅停止。
+	stopPacketBridge()
 	if err := stopTransport(); err != nil {
 		log.Printf("[ChimeraApp] 停止旧传输层失败: %v", err)
 	}
 
 	if err := startTransport(cfg); err != nil {
+		a.setError(err)
+		return err
+	}
+
+	// 优先使用服务器自动分配的地址；服务器未开启 client_cidr 时回退到 tunIP。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ip, err := getAssignedIP(ctx)
+	cancel()
+	if err != nil {
+		log.Printf("[ChimeraApp] 服务器未分配地址（%v），使用回退地址 %s", err, cfg.TunIP)
+		ip = cfg.TunIP
+	}
+	if err := startPacketBridge(ip); err != nil {
+		_ = stopTransport()
 		a.setError(err)
 		return err
 	}
@@ -111,6 +129,7 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 
 // Stop 停止传输层，但不会退出应用进程（GUI 保持运行）。
 func (a *ChimeraApp) Stop() error {
+	stopPacketBridge()
 	if err := stopTransport(); err != nil {
 		a.setError(err)
 		return err
@@ -150,6 +169,7 @@ func (a *ChimeraApp) Config() (map[string]any, error) {
 		"generation": a.cfg.Generation,
 		"pskHex":     a.cfg.PSKHex,
 		"serverAddr": a.cfg.ServerAddr,
+		"tunIP":      a.cfg.TunIP,
 	}, nil
 }
 
