@@ -1,0 +1,107 @@
+# 构建与运行
+
+## 通用前置
+
+- Go 1.24+（根模块 `go.mod` 声明 1.24）
+- 根目录跑测试：
+
+```bash
+cd chimera
+gofmt -l .            # 期望无输出（忽略 frontend/node_modules）
+go vet ./...
+go test -race ./...
+go build ./...
+```
+
+## 协议基因编译器
+
+```bash
+go run ./cmd/gencompiler -seed <64 hex chars> [-gen N] [-json out.json]
+```
+
+- 不传 `-seed` 会随机生成并打印，务必保存。
+- `-json` 导出完整协议规格；同 seed+gen 永远得到相同结果。
+
+## Linux 服务端
+
+```bash
+# 构建
+CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
+./build/build-linux.sh        # amd64 + arm64
+
+# 配置 /etc/chimera/server.json
+{
+  "listen": "0.0.0.0:4789",
+  "seed_hex": "...",
+  "generation": 0,
+  "psk_hex": "...",
+  "client_cidr": "10.99.0.0/24",
+  "tun": {"name":"chimera0","address":"10.99.0.1/24","mtu":1400}
+}
+
+# 运行（需 root 或 CAP_NET_ADMIN）
+sudo ./dist/chimerad -config /etc/chimera/server.json
+
+# NAT
+sudo ./scripts/setup-nat.sh eth0
+```
+
+systemd 单元见 `deploy/chimerad.service`。
+
+## Windows 客户端
+
+前置：Windows 10/11、Go 1.24+、Node 20+、Wails v2.10.x。
+
+```bat
+cd apps\windows
+npm install
+wails build -tags with_transport
+```
+
+或开发模式：`wails dev -tags with_transport`。
+
+构建/运行前：
+1. 把 `wintun.dll` 放到 `ChimeraClient.exe` 同目录。
+2. 以管理员运行（netsh 配置需要）。
+3. 服务端要开 `client_cidr`；否则客户端回退 `10.99.0.2`。
+
+Linux 交叉验证命令（本项目实际执行过）：
+
+```bash
+cd apps/windows
+go test ./...
+go test -tags with_transport ./...
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
+```
+
+## Android
+
+```bash
+cd apps/android
+./build-android-core.sh      # 需要 ANDROID_HOME + NDK，生成 app/libs/bind.aar
+# 然后用 Android Studio 打开 apps/android
+```
+
+未生成 AAR 时工程也能编译，连接时给出明确错误。
+Go 绑定 API 见 `bind/bind.go`；`gobind -lang=java chimera/bind` 可离线核对签名。
+
+## iOS
+
+在 macOS 上：
+
+```bash
+cd apps/ios
+./build-ios-core.sh          # 生成 ChimeraBind.xcframework
+# 用 Xcode 打开 ChimeraVPN/ChimeraVPN.xcodeproj
+```
+
+需要 Apple Developer 账号配置 App Group 与 NetworkExtension entitlements，
+两个 target 的 bundle id 见 pbxproj。
+
+## 移动端 Go 绑定签名核对
+
+```bash
+go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind
+```
+
+会生成 `Start / AssignedIP / Stop / Send / Receive` 的 Java 签名。

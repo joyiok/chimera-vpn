@@ -4,7 +4,12 @@ CHIMERA 方案的第一步：**不模仿任何已知协议，而是从一颗 256
 
 思路来源：USENIX Security 2025 的 [UPGen](https://www.usenix.org/biblio/fake-title-653)（Unidentified Protocol Generation）。UPGen 的核心观点是：与其伪装成 TLS/QUIC 留下模仿破绽，不如生成“看起来像某种合法加密协议、但谁也没见过”的新协议；审查者若按类别封杀，会误伤加密货币钱包、IoT、游戏、企业内部协议等大量合法流量。
 
-本仓库是这条路线的可运行原型，当前已扩展为跨平台 monorepo：
+本仓库是这条路线的可运行原型，当前已扩展为跨平台 monorepo。
+
+**接手开发请看文档**：
+[交接说明](docs/HANDOFF.md) · [架构](docs/ARCHITECTURE.md) · [协议](docs/PROTOCOL.md) · [构建](docs/BUILD.md) · [路线图](docs/ROADMAP.md) · [安全边界](docs/SECURITY.md)
+
+
 
 - **Linux 服务端**：`cmd/chimerad`（TUN + UDP 生成协议）
 - **Windows 图形客户端**：`apps/windows`（Wails + Wintun 数据面，路由接管待做）
