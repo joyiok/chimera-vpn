@@ -30,6 +30,17 @@ type ServerTunnel struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 	onClose   func()
+
+	// sessMu serializes codec state: Accept'd callers send while the mux
+	// readLoop decodes concurrently.
+	sessMu sync.Mutex
+
+	// ack tracks what the client has acknowledged of our sends; ackDue
+	// counts decoded frames until the next periodic ACK (mirror of
+	// PacketTunnel's loss recovery).
+	ack    ackTracker
+	ackDue uint64
+	ackMu  sync.Mutex
 }
 
 func (t *ServerTunnel) SendPacket(packet []byte) error {
@@ -38,15 +49,86 @@ func (t *ServerTunnel) SendPacket(packet []byte) error {
 		return net.ErrClosed
 	default:
 	}
+	t.sessMu.Lock()
 	frame, err := t.sess.Encode(packet)
 	if err != nil {
+		t.sessMu.Unlock()
 		return err
 	}
 	if len(frame) > maxDatagram {
+		t.sessMu.Unlock()
 		return fmt.Errorf("encrypted frame too large: %d", len(frame))
 	}
 	_, err = t.conn.WriteTo(frame, t.peer)
-	return err
+	t.sessMu.Unlock()
+	if err != nil {
+		return err
+	}
+	t.maybeSendLossControl()
+	return nil
+}
+
+// maybeSendLossControl asks the client to skip a gap once the
+// unacknowledged span reaches skipSpan (see PacketTunnel for the design).
+func (t *ServerTunnel) maybeSendLossControl() {
+	t.sessMu.Lock()
+	_, sent := t.sess.AckState()
+	if t.ack.unackedSpan(sent) < skipSpan {
+		t.sessMu.Unlock()
+		return
+	}
+	frame, err := t.sess.Encode(encodeSkipPayload(sent))
+	t.sessMu.Unlock()
+	if err != nil {
+		return
+	}
+	if len(frame) > maxDatagram {
+		return
+	}
+	if _, err := t.conn.WriteTo(frame, t.peer); err != nil {
+		return
+	}
+	t.ack.observeAck(sent)
+}
+
+// handleLossControl applies ACK/SKIP payloads; see PacketTunnel.
+// Caller must hold sessMu.
+func (t *ServerTunnel) handleLossControl(pkt []byte) bool {
+	if len(pkt) != 9 || (pkt[0] != ControlAck && pkt[0] != ControlSkip) {
+		return false
+	}
+	kind, v, err := decodeAckPayload(pkt)
+	if err != nil {
+		return true
+	}
+	switch kind {
+	case ControlAck:
+		t.ack.observeAck(v)
+	case ControlSkip:
+		_ = t.sess.AdvanceBaseTo(v)
+	}
+	return true
+}
+
+// noteDecoded counts decoded client frames; every ackEvery-th one triggers
+// an ACK of the server's contiguous receive position.
+func (t *ServerTunnel) noteDecoded() bool {
+	t.ackMu.Lock()
+	defer t.ackMu.Unlock()
+	t.ackDue++
+	if t.ackDue < ackEvery {
+		return false
+	}
+	t.ackDue = 0
+	return true
+}
+
+// ackBaseSnapshot returns the receive base under sessMu, for tests.
+func (t *ServerTunnel) ackBaseSnapshot() uint64 {
+	t.sessMu.Lock()
+	defer t.sessMu.Unlock()
+	base, _ := t.sess.AckState()
+	return base
 }
 
 // SendControl encrypts a control payload (e.g. the assigned TUN address).
@@ -63,6 +145,23 @@ func (t *ServerTunnel) ReceivePacket() ([]byte, error) {
 		return pkt, nil
 	case <-t.closed:
 		return nil, net.ErrClosed
+	}
+}
+
+// TryReceive returns one queued packet if available without blocking;
+// ok is false when the queue is momentarily empty. Control frames (ACK/
+// SKIP) never reach this queue, so callers only ever see data or nil.
+func (t *ServerTunnel) TryReceive() ([]byte, error) {
+	select {
+	case pkt, ok := <-t.recv:
+		if !ok {
+			return nil, net.ErrClosed
+		}
+		return pkt, nil
+	case <-t.closed:
+		return nil, net.ErrClosed
+	default:
+		return nil, nil
 	}
 }
 
@@ -190,11 +289,29 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 	m.mu.Lock()
 	if tun, ok := m.established[key]; ok {
 		m.mu.Unlock()
+		tun.sessMu.Lock()
 		msg, err := tun.sess.Decode(data)
 		if err != nil {
+			tun.sessMu.Unlock()
 			return // silent: duplicate, probe, or wrong session
 		}
-		tun.feed(append([]byte(nil), msg.Payload...))
+		pkt := append([]byte(nil), msg.Payload...)
+		if tun.handleLossControl(pkt) {
+			tun.sessMu.Unlock()
+			return
+		}
+		due := tun.noteDecoded()
+		var frame []byte
+		var ackErr error
+		if due {
+			base, _ := tun.sess.AckState()
+			frame, ackErr = tun.sess.Encode(encodeAckPayload(base))
+		}
+		tun.sessMu.Unlock()
+		if ackErr == nil && due && len(frame) <= maxDatagram {
+			_, _ = tun.conn.WriteTo(frame, tun.peer) // best effort
+		}
+		tun.feed(pkt)
 		return
 	}
 

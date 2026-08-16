@@ -7,9 +7,11 @@ package tunnel
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"chimera/internal/compiler"
@@ -22,9 +24,80 @@ const (
 	maxDatagram      = 64 * 1024
 
 	// ControlAssignIP marks a non-IP control payload. IP packets start with
-	// a 0x4 or 0x6 version nibble, so 0x01 is unambiguous.
+	// a 0x4 or 0x6 version nibble, so 0x01-0x03 are unambiguous.
 	ControlAssignIP = 0x01
+	// ControlAck reports the sender's contiguous receive position: the
+	// first sequence number not yet known to have arrived in order. Loss
+	// recovery half 1 of 2 - see ackTracker.
+	ControlAck = 0x02
+	// ControlSkip asks the peer to move its receive window base forward,
+	// declaring every sequence below it dead. Loss recovery half 2 of 2.
+	ControlSkip = 0x03
+
+	// ackEvery: the receiver piggybacks nothing, so ACKs ride their own
+	// frames; 32 data frames between ACKs keeps overhead ~3%.
+	ackEvery = 32
+	// skipSpan: when the unacknowledged span reaches this fraction of the
+	// replay window, the sender asks the peer to skip past the gap rather
+	// than let the window wedge. 3/4 leaves headroom for in-flight frames.
+	skipSpan = compiler.PacketWindow * 3 / 4
 )
+
+// ackTracker is one direction's loss-recovery state. The owner of a
+// tracker is the sender; peerBase is the peer's ACKed contiguous position
+// in the owner's send sequence. All methods are safe for concurrent use.
+type ackTracker struct {
+	mu sync.Mutex
+	// peerBase: highest contiguous position the peer has acknowledged.
+	peerBase uint64
+	// lastLocalBase the peer was told about (our own receive position in
+	// the opposite direction - see tunnel note below).
+	ackedBase uint64
+}
+
+func (a *ackTracker) observeAck(base uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if base > a.peerBase {
+		a.peerBase = base
+	}
+}
+
+func (a *ackTracker) unackedSpan(sent uint64) uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if sent < a.peerBase {
+		return 0
+	}
+	return sent - a.peerBase
+}
+
+// encodeAckPayload builds the encrypted control payload for an ACK of the
+// given contiguous base sequence.
+func encodeAckPayload(base uint64) []byte {
+	p := make([]byte, 9)
+	p[0] = ControlAck
+	binary.BigEndian.PutUint64(p[1:], base)
+	return p
+}
+
+// encodeSkipPayload builds the encrypted control payload asking the peer
+// to advance its receive base to target.
+func encodeSkipPayload(target uint64) []byte {
+	p := make([]byte, 9)
+	p[0] = ControlSkip
+	binary.BigEndian.PutUint64(p[1:], target)
+	return p
+}
+
+// decodeAckPayload parses an ACK/SKIP control payload produced by the
+// encode functions above.
+func decodeAckPayload(p []byte) (byte, uint64, error) {
+	if len(p) != 9 || (p[0] != ControlAck && p[0] != ControlSkip) {
+		return 0, 0, fmt.Errorf("bad ack control payload len %d", len(p))
+	}
+	return p[0], binary.BigEndian.Uint64(p[1:]), nil
+}
 
 // PacketTunnel is an established encrypted packet channel.
 type PacketTunnel struct {
@@ -33,6 +106,16 @@ type PacketTunnel struct {
 	sess *compiler.PacketSession
 	ctrl chan []byte
 	data chan []byte
+
+	// sessMu serializes codec state (encode, decode, window moves): the
+	// user goroutine sends while the receive loop decodes concurrently.
+	sessMu sync.Mutex
+
+	// ack tracks what the peer has acknowledged of our sends; ackDue counts
+	// decoded frames until the next periodic ACK of our receive position.
+	ack    ackTracker
+	ackDue uint64
+	ackMu  sync.Mutex
 }
 
 // NewPacketTunnel wraps an established packet session.
@@ -57,7 +140,57 @@ func (t *PacketTunnel) SendControl(payload []byte) error {
 }
 
 func (t *PacketTunnel) sendPayload(payload []byte) error {
+	t.sessMu.Lock()
 	frame, err := t.sess.Encode(payload)
+	if err != nil {
+		t.sessMu.Unlock()
+		return err
+	}
+	if len(frame) > maxDatagram {
+		t.sessMu.Unlock()
+		return fmt.Errorf("encrypted frame too large: %d", len(frame))
+	}
+	_, err = t.conn.WriteTo(frame, t.peer)
+	t.sessMu.Unlock()
+	if err != nil {
+		return err
+	}
+	t.maybeSendLossControl()
+	return nil
+}
+
+// maybeSendLossControl runs after every send: if the peer has fallen
+// skipSpan behind our send position, tell it to skip the gap. ACKs of our
+// own receive position are driven by the receive path instead.
+func (t *PacketTunnel) maybeSendLossControl() {
+	t.sessMu.Lock()
+	_, sent := t.sess.AckState()
+	if t.ack.unackedSpan(sent) < skipSpan {
+		t.sessMu.Unlock()
+		return
+	}
+	frame, err := t.sess.Encode(encodeSkipPayload(sent))
+	t.sessMu.Unlock()
+	if err != nil {
+		return // best effort; the next send retries
+	}
+	if len(frame) > maxDatagram {
+		return
+	}
+	if _, err := t.conn.WriteTo(frame, t.peer); err != nil {
+		return
+	}
+	// Optimistically advance our view of the peer's position so we do not
+	// emit a skip frame for every subsequent send.
+	t.ack.observeAck(sent)
+}
+
+// sendControlRaw encrypts and transmits one already-encoded control
+// payload without recursing into maybeSendLossControl.
+func (t *PacketTunnel) sendControlRaw(payload []byte) error {
+	t.sessMu.Lock()
+	frame, err := t.sess.Encode(payload)
+	t.sessMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -66,6 +199,57 @@ func (t *PacketTunnel) sendPayload(payload []byte) error {
 	}
 	_, err = t.conn.WriteTo(frame, t.peer)
 	return err
+}
+
+// handleLossControl applies a decoded control payload, returning true when
+// the payload was an ACK/SKIP frame (data callers continue the loop).
+// Caller must hold sessMu.
+func (t *PacketTunnel) handleLossControl(pkt []byte) bool {
+	if len(pkt) != 9 || (pkt[0] != ControlAck && pkt[0] != ControlSkip) {
+		return false
+	}
+	kind, v, err := decodeAckPayload(pkt)
+	if err != nil {
+		return true
+	}
+	switch kind {
+	case ControlAck:
+		t.ack.observeAck(v)
+	case ControlSkip:
+		if err := t.sess.AdvanceBaseTo(v); err != nil {
+			// A skip beyond our window or below base is stale/malicious;
+			// ignore it silently.
+			_ = err
+		}
+	}
+	return true
+}
+
+// decodeLocked authenticates one datagram and applies control payloads.
+// Caller must hold sessMu; the returned payload is nil for control frames.
+func (t *PacketTunnel) decodeLocked(buf []byte) (pkt []byte, isCtrl bool, err error) {
+	msg, err := t.sess.Decode(buf)
+	if err != nil {
+		return nil, false, err
+	}
+	pkt = append([]byte(nil), msg.Payload...)
+	if t.handleLossControl(pkt) {
+		return nil, true, nil
+	}
+	return pkt, false, nil
+}
+
+// noteDecoded records one decoded data frame from the peer and returns
+// whether a periodic ACK of our contiguous receive position is now due.
+func (t *PacketTunnel) noteDecoded() bool {
+	t.ackMu.Lock()
+	defer t.ackMu.Unlock()
+	t.ackDue++
+	if t.ackDue < ackEvery {
+		return false
+	}
+	t.ackDue = 0
+	return true
 }
 
 // ReceivePacket blocks until a decrypted IP packet is available. Control
@@ -85,18 +269,40 @@ func (t *PacketTunnel) ReceivePacket() ([]byte, error) {
 		if t.peer != nil && addr.String() != t.peer.String() {
 			continue
 		}
-		msg, err := t.sess.Decode(buf[:n])
+		t.sessMu.Lock()
+		pkt, isCtrl, err := t.decodeLocked(buf[:n])
 		if err != nil {
+			t.sessMu.Unlock()
 			continue // silent: invalid probes and duplicates disappear
 		}
-		pkt := append([]byte(nil), msg.Payload...)
+		if isCtrl {
+			t.sessMu.Unlock()
+			continue
+		}
 		if len(pkt) > 0 && pkt[0] == ControlAssignIP {
+			t.sessMu.Unlock()
 			select {
 			case t.ctrl <- pkt[1:]:
 			default:
 				// No control consumer yet; drop rather than stall the loop.
 			}
 			continue
+		}
+		due := t.noteDecoded()
+		var ackErr error
+		if due {
+			var frame []byte
+			base, _ := t.sess.AckState()
+			frame, ackErr = t.sess.Encode(encodeAckPayload(base))
+			t.sessMu.Unlock()
+			if ackErr == nil && len(frame) <= maxDatagram {
+				_, ackErr = t.conn.WriteTo(frame, t.peer)
+			}
+			if ackErr != nil {
+				continue // best effort; the next due frame retries
+			}
+		} else {
+			t.sessMu.Unlock()
 		}
 		return pkt, nil
 	}
@@ -135,13 +341,30 @@ func (t *PacketTunnel) WaitControl(ctx context.Context) ([]byte, error) {
 		if t.peer != nil && addr.String() != t.peer.String() {
 			continue
 		}
-		msg, err := t.sess.Decode(buf[:n])
+		t.sessMu.Lock()
+		pkt, isCtrl, err := t.decodeLocked(buf[:n])
 		if err != nil {
+			t.sessMu.Unlock()
 			continue
 		}
-		pkt := append([]byte(nil), msg.Payload...)
+		if isCtrl {
+			t.sessMu.Unlock()
+			continue
+		}
 		if len(pkt) > 0 && pkt[0] == ControlAssignIP {
+			t.sessMu.Unlock()
 			return pkt[1:], nil
+		}
+		due := t.noteDecoded()
+		var frame []byte
+		var ackErr error
+		if due {
+			base, _ := t.sess.AckState()
+			frame, ackErr = t.sess.Encode(encodeAckPayload(base))
+		}
+		t.sessMu.Unlock()
+		if ackErr == nil && due && len(frame) <= maxDatagram {
+			_, _ = t.conn.WriteTo(frame, t.peer) // best effort
 		}
 		select {
 		case t.data <- pkt:

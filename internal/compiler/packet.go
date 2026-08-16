@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	// packetWindow is how far ahead the receiver will try AEAD nonces when
+	// PacketWindow is how far ahead the receiver will try AEAD nonces when
 	// frames arrive out of order. The generated VPN carries IP packets, so
 	// limited reordering is expected; 8192 frames is ~11 MB at 1400 B.
-	packetWindow      = 8192
-	packetWindowWords = packetWindow / 64
+	PacketWindow      = 8192
+	packetWindowWords = PacketWindow / 64
 )
 
 // NewPacketMessageCodec is a MessageCodec configured for datagram mode:
@@ -94,7 +94,7 @@ func (c *MessageCodec) DecodePacket(frame []byte) (*Message, error) {
 	// first one only after the window is exhausted so transient auth misses
 	// are silent.
 	var lastErr error
-	for seq := c.packetBase; seq < c.packetBase+packetWindow; seq++ {
+	for seq := c.packetBase; seq < c.packetBase+PacketWindow; seq++ {
 		off := seq - c.packetBase
 		if c.packetSeen[off/64]&(1<<(off%64)) != 0 {
 			continue
@@ -125,6 +125,44 @@ func (c *MessageCodec) shiftPacketWindow() {
 		}
 	}
 	c.packetSeen[packetWindowWords-1] >>= 1
+}
+
+// PacketBase returns the receiver window base: the first sequence number
+// that is not yet known to have arrived (in order) or been skipped over.
+func (c *MessageCodec) PacketBase() uint64 {
+	if !c.packetMode {
+		return 0
+	}
+	return c.packetBase
+}
+
+// PacketSent returns how many packet-mode frames this codec has encoded.
+func (c *MessageCodec) PacketSent() uint64 {
+	if !c.packetMode {
+		return 0
+	}
+	return c.packetSend
+}
+
+// AdvanceBaseTo moves the receiver window base forward and clears the
+// replay bitmap, declaring every sequence below the new base as dead: a
+// frame from below the new base will never again authenticate. This is
+// the receiver half of loss recovery - the sender asks for a skip once
+// the unacknowledged span grows too large. A target at or below the
+// current base, or beyond the window, is rejected.
+func (c *MessageCodec) AdvanceBaseTo(target uint64) error {
+	if !c.packetMode {
+		return errors.New("message codec is not in packet mode")
+	}
+	if target <= c.packetBase {
+		return nil
+	}
+	if target > c.packetBase+PacketWindow {
+		return fmt.Errorf("advance target %d beyond window (base %d)", target, c.packetBase)
+	}
+	c.packetBase = target
+	c.packetSeen = [packetWindowWords]uint64{}
+	return nil
 }
 
 // PacketSession is the datagram-mode equivalent of Session.
@@ -163,3 +201,18 @@ func (p *PacketSession) Decode(frame []byte) (*Message, error) {
 
 // Spec returns the shared application-record layout.
 func (p *PacketSession) Spec() genome.MessageSpec { return p.spec }
+
+// AckState exposes what loss recovery needs: the receiver window base and
+// the number of frames sent in this direction.
+func (p *PacketSession) AckState() (base, sent uint64) {
+	return p.recv.PacketBase(), p.send.PacketSent()
+}
+
+// PacketBase returns this side's receive window base.
+func (p *PacketSession) PacketBase() uint64 { return p.recv.PacketBase() }
+
+// AdvanceBaseTo moves this side's receive window base forward (sender asked
+// to skip a lost run of frames). See MessageCodec.AdvanceBaseTo.
+func (p *PacketSession) AdvanceBaseTo(target uint64) error {
+	return p.recv.AdvanceBaseTo(target)
+}
