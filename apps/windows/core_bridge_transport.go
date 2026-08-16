@@ -20,6 +20,9 @@ var transportClient *core.Client
 // packetBridge 是 Windows Wintun 数据面；stopPacketBridge 会关闭它。
 var packetBridge *bridge.Bridge
 
+// routeTakeover 管理 0/1 + 128/1 默认路由接管与服务器 /32 例外。
+var routeTakeover = bridge.NewRouteTakeover()
+
 // startTransport 使用计划中的 core API 创建并启动客户端。
 func startTransport(cfg appConfig) error {
 	client, err := core.NewClient(core.Config{
@@ -64,7 +67,8 @@ func getAssignedIP(ctx context.Context) (string, error) {
 	return transportClient.AssignedIP(ctx)
 }
 
-// startPacketBridge 创建 Wintun 虚拟网卡并启动双向包泵。
+// startPacketBridge 创建 Wintun 虚拟网卡、启动双向包泵，并接管默认路由。
+// 路由接管失败按非致命处理：隧道仍可用（用户手工路由），只记日志。
 func startPacketBridge(ip string) error {
 	if transportClient == nil {
 		return fmt.Errorf("transport not started")
@@ -76,12 +80,22 @@ func startPacketBridge(ip string) error {
 	}
 	packetBridge = b
 	log.Printf("[coreBridge] Wintun packet bridge started with %s/24", ip)
+
+	serverAddr := transportClient.Config().ServerAddr
+	if err := routeTakeover.Install(b.Name(), ip, serverAddr); err != nil {
+		log.Printf("[coreBridge] 默认路由接管失败（隧道仍可用，可手工添加路由）: %v", err)
+	} else {
+		log.Printf("[coreBridge] 默认路由已接管: 0.0.0.0/1 + 128.0.0.0/1 -> %s，服务器例外 %s", b.Name(), serverAddr)
+	}
 	return nil
 }
 
-// stopPacketBridge 停止 Wintun 数据面。
+// stopPacketBridge 释放路由并停止 Wintun 数据面。
 func stopPacketBridge() {
 	if packetBridge != nil {
+		if err := routeTakeover.Release(); err != nil {
+			log.Printf("[coreBridge] 释放接管路由失败（重启后自动消失）: %v", err)
+		}
 		_ = packetBridge.Close()
 		packetBridge = nil
 	}

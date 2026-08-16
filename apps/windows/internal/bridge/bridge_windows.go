@@ -35,6 +35,7 @@ func platformStart(ip string, mtu int, send Sender, recv Receiver) (*Bridge, err
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &Bridge{
 		dev:  dev,
+		name: name,
 		ip:   ip,
 		send: send,
 		recv: recv,

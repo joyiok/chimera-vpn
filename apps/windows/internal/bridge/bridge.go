@@ -20,6 +20,7 @@ type platformDevice interface {
 // Bridge is an active TUN <-> core packet pump.
 type Bridge struct {
 	dev       platformDevice
+	name      string
 	ip        string
 	send      Sender
 	recv      Receiver
@@ -34,6 +35,9 @@ func Start(ip string, mtu int, send Sender, recv Receiver) (*Bridge, error) {
 
 // Done is closed when both loops have exited.
 func (b *Bridge) Done() <-chan struct{} { return b.done }
+
+// Name returns the adapter name the OS assigned (route takeover needs it).
+func (b *Bridge) Name() string { return b.name }
 
 // Close stops the data plane. It returns immediately; loop goroutines unwind
 // as soon as the transport socket is also closed.
