@@ -124,3 +124,14 @@ func TestDefaultCipherStaysAESFamily(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxIntValueU32FitsInt64(t *testing.T) {
+	// EncU32's max must not be typed as 32-bit int: gomobile android/armeabi-v7a
+	// rejects `1<<32 - 1` as int (overflows).
+	if got, want := maxIntValue(EncU32), int64(1<<32-1); got != want {
+		t.Fatalf("maxIntValue(EncU32)=%d want %d", got, want)
+	}
+	if maxIntValue(EncU8) < 16 {
+		t.Fatal("u8 max too small for a 16-byte handshake field")
+	}
+}

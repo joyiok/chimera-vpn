@@ -71,8 +71,19 @@ func TestHandshakeFirstDatagramExemptFromFEP(t *testing.T) {
 		if !exempt {
 			t.Fatalf("seed %d pattern %s first datagram blocked by inferred FEP detector", i, g.HandshakePattern)
 		}
-		if rule != "ex2" && rule != "ex4" {
-			t.Fatalf("seed %d exempt via %s, want ex2 or ex4 (not TLS/HTTP Ex5)", i, rule)
+		// Wu et al. evaluate Ex1 (popcount) before Ex2/Ex4. A printable
+		// cover can still trip Ex1 first; that is still an exemption. Reject
+		// only Ex5 (TLS/HTTP DPI) and require the cover prefix we emit.
+		if rule == "ex5" {
+			t.Fatalf("seed %d exempt via Ex5 TLS/HTTP fingerprint", i)
+		}
+		if len(wire) < 6 {
+			t.Fatalf("seed %d first datagram %d bytes, shorter than Ex2 prefix", i, len(wire))
+		}
+		for _, b := range wire[:6] {
+			if b < 0x20 || b > 0x7e {
+				t.Fatalf("seed %d first 6 bytes not printable ASCII (rule %s)", i, rule)
+			}
 		}
 		if spec.Direction == genome.DirClient && len(wire) >= 160 && len(wire) <= 700 {
 			t.Fatalf("seed %d client-first wire %d still in IMC 2020 160-700 band", i, len(wire))

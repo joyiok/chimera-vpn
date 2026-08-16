@@ -12,21 +12,13 @@ if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ]; then
     exit 1
 fi
 
-# 1. 确保 gomobile / gobind 可用
-if ! command -v gomobile >/dev/null 2>&1; then
-    echo "[1/3] 安装 gomobile ..."
-    go install golang.org/x/mobile/cmd/gomobile@latest
-fi
+export PATH="$(go env GOPATH)/bin:$PATH"
 
-if ! command -v gobind >/dev/null 2>&1; then
-    echo "[1/3] 安装 gobind ..."
-    go install golang.org/x/mobile/cmd/gobind@latest
-fi
+echo "[1/3] 安装 gomobile / gobind（go.mod tool 版本）..."
+(cd "$REPO_ROOT" && go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind)
 
-export PATH="$PATH:$(go env GOPATH)/bin"
-
-if ! command -v gomobile >/dev/null 2>&1; then
-    echo "错误：找不到 gomobile，请确认 \$(go env GOPATH)/bin 在 PATH 中" >&2
+if ! command -v gomobile >/dev/null 2>&1 || ! command -v gobind >/dev/null 2>&1; then
+    echo "错误：找不到 gomobile/gobind，请确认 \$(go env GOPATH)/bin 在 PATH 中" >&2
     exit 1
 fi
 
