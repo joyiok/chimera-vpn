@@ -21,18 +21,13 @@
 `.github/workflows/ci.yml`：根模块 fmt/vet/test-race/build、Windows 子模块双标签
 test/vet + amd64 交叉编译、gobind Java 签名冒烟。
 
-## 3. 长期丢包恢复（packet ACK）
+## 3. ~~长期丢包恢复（packet ACK）~~（已完成）
 
-**现状**：`PacketMessageCodec` 的 8192 帧重排窗口；某帧永久丢失会卡住 `base`。
-
-**要做**：
-- 在数据载荷里加轻量控制类型（如 `0x02=ACK`），周期性 ACK 最大连续序号。
-- 发送端在 N 个 RTT 后把未 ACK 的缺口标记为“已放弃”。
-- 接收端按 ACK 推进 base，而不是等缺口补上。
-- 可选：简单滑动窗口 + 选择性重传。
-
-**切入文件**：`internal/compiler/packet.go`（nonce 窗口）、`internal/tunnel/tunnel.go`、
-`internal/tunnel/mux.go`（服务端同逻辑）。
+**实现**：ACK/SKIP 加密控制载荷（见 PROTOCOL.md 第 5 节）。接收端每 32 帧周期
+ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端跳过缺口。
+`compiler.PacketSession.AdvanceBaseTo` 清窗推进，越权目标被拒绝。两端对称接入
+（`PacketTunnel` / `ServerTunnel`），会话状态由 `sessMu` 串行化。
+可选后续：选择性重传（当前为跳过语义，依赖上层协议重传）。
 
 ## 4. Android/iOS 真机联调
 

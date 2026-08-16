@@ -48,17 +48,35 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 流模式严格递增；解码失败不推进序号。
 - 包模式发送端独立递增 `packetSend`；接收端在 `[base, base+8192)` 窗口内逐个尝试 nonce，
   命中后置 seen 位，**连续 seen 才推进 base**（允许 IP 包乱序）。
-- 当前没有 ACK 推进：某帧永久丢失时窗口 base 会停滞，是已知限制（见 ROADMAP）。
+- 丢包恢复（见下节）：ACK 推进连续位置，SKIP 越过永久缺口，base 不会再永久停滞。
 
-## 5. 控制包与地址分配
+## 5. 控制包、地址分配与丢包恢复
 
 - 应用载荷首字节 `0x01` = `ControlAssignIP`；其余字节为分配的 IPv4 字符串。
-- IP 包首字节必为 `0x4x`（IPv4）或 `0x6x`（IPv6），不会与 `0x01` 冲突。
+- IP 包首字节必为 `0x4x`（IPv4）或 `0x6x`（IPv6），不会与 `0x01`-`0x03` 冲突。
 - 服务端 `Accept` 握手完成后立即发送控制包，然后才进入正常数据转发。
 - 客户端 `PacketTunnel.WaitControl` 自行读 socket（因为平台此时还没启动泵），
   期间遇到的数据包进入 256 深度的 `data` 队列，`ReceivePacket` 优先取该队列。
 - `core/assign.go` 的地址池：`client_cidr` 内 host offset 2 起分配，offset 1 保留给网关，
   广播地址排除；释放后复用。
+
+### 丢包恢复（ACK / SKIP）
+
+包模式重排窗口只允许"连续 seen 才推进 base"，永久丢帧会卡死窗口。恢复机制
+（载荷在 AEAD 密文内，审查者不可见；两端对称实现）：
+
+- `0x02 = ControlAck`，载荷 9 字节 = `0x02 || uint64(contiguous_base) BE`。
+  接收端每解码 32 个数据帧（`ackEvery`）发送一次，报告自己的连续接收位置。
+- `0x03 = ControlSkip`，载荷 9 字节 = `0x03 || uint64(target_base) BE`。
+  发送端发现未确认跨度 `sent - peerBase >= 6144`（`skipSpan` = 窗口的 3/4）时，
+  请求对端把 base 直接跳到当前发送位置。
+- 接收端 `AdvanceBaseTo(target)`：清空 seen 位图、base 前移；低于/等于当前 base
+  是幂等 no-op，超出窗口被拒绝（防伪造的越权跳变）。
+- SKIP 语义：只牺牲"迟到帧"（跳变之后到达的旧帧不再可认证）；缺口之上的乱序帧
+  本来就已即时投递，不受影响。这是权衡而非重传：VPN 载荷是 IP 包，上层协议
+  自带可靠性。
+- 会话状态（encode/decode/窗口推进）由 `sessMu` 串行化：用户 goroutine 发送的
+  同时接收循环在解码。
 
 ## 6. 抗探测行为（当前实现）
 
