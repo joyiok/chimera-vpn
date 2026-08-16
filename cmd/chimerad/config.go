@@ -50,9 +50,14 @@ type serverConfig struct {
 	// Generation so key rotation does not drop old clients. nil/omitted
 	// defaults to 2; 0 means only the configured generation.
 	GenerationWindow *int `json:"generation_window"`
+	// ReplayPath persists handshake/knock hashes across restarts.
+	// Omitted defaults to /var/lib/chimera/handshake.replay; empty string
+	// keeps the table in memory only.
+	ReplayPath *string `json:"replay_path"`
 }
 
 func defaultConfig() serverConfig {
+	replay := "/var/lib/chimera/handshake.replay"
 	return serverConfig{
 		Listen:         "0.0.0.0:4789",
 		ClientCIDR:     "10.99.0.0/24",
@@ -60,6 +65,7 @@ func defaultConfig() serverConfig {
 		IdleTimeoutSec: 180,
 		MaxSessions:    256,
 		JitterMS:       20,
+		ReplayPath:     &replay,
 		Tun:            tunConfig{Name: "chimera0", Address: "10.99.0.1/24", MTU: 1400},
 	}
 }
@@ -117,6 +123,10 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		}
 		window = uint64(*cfg.GenerationWindow)
 	}
+	replay := "/var/lib/chimera/handshake.replay"
+	if cfg.ReplayPath != nil {
+		replay = *cfg.ReplayPath
+	}
 	return core.Config{
 		SeedHex:              cfg.SeedHex,
 		Generation:           cfg.Generation,
@@ -132,6 +142,7 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		DisableDecoy:         cfg.DisableDecoy,
 		DisableShape:         cfg.DisableShape,
 		JitterMax:            jitter,
+		ReplayPath:           replay,
 	}, nil
 }
 

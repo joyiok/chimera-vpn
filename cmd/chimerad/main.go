@@ -67,9 +67,9 @@ func main() {
 		if len(fp) > 16 {
 			fp = fp[:16]
 		}
-		fmt.Printf("config ok listen=%s generation=%d window=%d jitter=%s sessions=%d genome=%s cover_len=%d\n",
+		fmt.Printf("config ok listen=%s generation=%d window=%d jitter=%s sessions=%d genome=%s cover_len=%d replay=%s\n",
 			coreCfg.ServerAddr, coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax, coreCfg.MaxSessions,
-			fp, compiler.CoverLen(g))
+			fp, compiler.CoverLen(g), coreCfg.ReplayPath)
 		return
 	}
 

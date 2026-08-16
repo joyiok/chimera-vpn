@@ -74,6 +74,9 @@ func TestHandshakeFirstDatagramExemptFromFEP(t *testing.T) {
 		if rule != "ex2" && rule != "ex4" {
 			t.Fatalf("seed %d exempt via %s, want ex2 or ex4 (not TLS/HTTP Ex5)", i, rule)
 		}
+		if spec.Direction == genome.DirClient && len(wire) >= 160 && len(wire) <= 700 {
+			t.Fatalf("seed %d client-first wire %d still in IMC 2020 160-700 band", i, len(wire))
+		}
 	}
 }
 

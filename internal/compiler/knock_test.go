@@ -50,6 +50,21 @@ func TestKnockUniqueNonces(t *testing.T) {
 	}
 }
 
+func TestVerifyKnockAcceptsTrailingPad(t *testing.T) {
+	psk := testPSK(4)
+	knock, err := EncodeKnock(psk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := append(append([]byte(nil), knock...), []byte("printable-tail")...)
+	if !VerifyKnock(psk, padded) {
+		t.Fatal("knock with trailing pad rejected")
+	}
+	if string(KnockReplayKey(padded)) != string(knock) {
+		t.Fatal("replay key must be the unpadded knock")
+	}
+}
+
 func TestEncodeKnockEmptyPSK(t *testing.T) {
 	if _, err := EncodeKnock(nil); err == nil {
 		t.Fatal("empty PSK accepted")

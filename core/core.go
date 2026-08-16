@@ -56,9 +56,13 @@ type Config struct {
 	// DisableShape turns off datagram length shaping (default: pad frames
 	// to compiler.DefaultShapeBuckets).
 	DisableShape bool
-	// JitterMax smears send timing uniformly in [0, JitterMax]. 0 disables
-	// jitter. Production servers should use tunnel.DefaultJitterMax.
+	// JitterMax smears send timing with a truncated exponential in
+	// (0, JitterMax]. 0 disables jitter. Production servers should use
+	// tunnel.DefaultJitterMax.
 	JitterMax time.Duration
+	// ReplayPath (server) persists authenticated handshake/knock hashes
+	// across process restarts. Empty keeps the table in memory only.
+	ReplayPath string
 }
 
 // MaxGenerationWindow caps how many extra generations a server will accept
@@ -363,6 +367,7 @@ func (s *Server) Start() error {
 			}
 		}
 	}
+	mux.WithReplayPath(s.cfg.ReplayPath)
 	done := make(chan struct{})
 	go func() {
 		mux.Run(ctx)

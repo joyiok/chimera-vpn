@@ -57,6 +57,7 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
 # disable_decoy / disable_shape: 关闭探测诱饵 / 包长整形
 # jitter_ms: 发送时序抖动上限（省略或 0 = 20ms，负数关闭）
 # generation_window: 额外接受 gen..gen+N（省略 = 2，0 = 只接受配置的 generation）
+# replay_path: 握手重放表落盘（省略 = /var/lib/chimera/handshake.replay，空串 = 仅内存）
 # 校验配置：chimerad -config /etc/chimera/server.json -check-config
 # 配置文件权限建议 0600（含 PSK）
 # 一页部署：docs/DEPLOY.md

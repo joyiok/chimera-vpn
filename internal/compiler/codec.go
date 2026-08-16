@@ -582,6 +582,55 @@ func ReadFrame(r io.Reader, spec genome.MessageSpec) ([]byte, error) {
 	return frame, nil
 }
 
+// DeclaredFrame returns the prefix of a datagram that the generated length
+// field says is the real record. Trailing bytes (handshake printable pad
+// used to leave the IMC 2020 160–700 replay-trigger band) are dropped so
+// AEAD and the handshake transcript see the same inner frame the sender
+// encoded. A truncated datagram is an error; a frame with no extra tail is
+// returned unchanged.
+func DeclaredFrame(spec genome.MessageSpec, frame []byte) ([]byte, error) {
+	off := 0
+	var declared *uint64
+	var subject string
+	for i, f := range spec.PlainFields {
+		n, err := fixedSize(f)
+		if err != nil {
+			return nil, err
+		}
+		if off+n > len(frame) {
+			return nil, fmt.Errorf("%s: truncated plain field %s", spec.Name, f.Kind)
+		}
+		if i == spec.LengthFieldIndex {
+			lv, err := decodeInt(frame[off:off+n], f.Encoding, f.Endian)
+			if err != nil {
+				return nil, err
+			}
+			declared = &lv
+			subject = f.Subject
+		}
+		off += n
+	}
+	if declared == nil {
+		return frame, nil
+	}
+	var n int
+	switch subject {
+	case "ciphertext":
+		n = off + int(*declared)
+	case "record":
+		n = int(*declared)
+	default:
+		return nil, fmt.Errorf("%s: unknown length subject %q", spec.Name, subject)
+	}
+	if n < off || n > len(frame) {
+		return nil, fmt.Errorf("%s: declared frame %d out of range (have %d, plain %d)", spec.Name, n, len(frame), off)
+	}
+	if n == len(frame) {
+		return frame, nil
+	}
+	return frame[:n], nil
+}
+
 func writeFull(w io.Writer, p []byte) error {
 	for len(p) > 0 {
 		n, err := w.Write(p)

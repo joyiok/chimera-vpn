@@ -125,16 +125,20 @@ func (h *Handshake) RecvStep(frame []byte) error {
 	}
 	spec := h.cp.Genome.Handshake[h.idx]
 	if spec.Direction == h.role {
-		return fmt.Errorf("step %d is not an incoming message for role %s", h.idx, h.role)
+		return fmt.Errorf("step %d is not an incoming message for role %s", h.idx, spec.Direction)
 	}
-	msg, err := h.codecs[h.idx].Decode(frame)
+	trimmed, err := DeclaredFrame(spec, frame)
+	if err != nil {
+		return fmt.Errorf("handshake step %d: %w", h.idx, err)
+	}
+	msg, err := h.codecs[h.idx].Decode(trimmed)
 	if err != nil {
 		return fmt.Errorf("handshake step %d decode: %w", h.idx, err)
 	}
 	if err := h.capturePeerKey(msg); err != nil {
 		return fmt.Errorf("handshake step %d: %w", h.idx, err)
 	}
-	if _, err := h.transcript.Write(frame); err != nil {
+	if _, err := h.transcript.Write(trimmed); err != nil {
 		return err
 	}
 	h.idx++

@@ -13,7 +13,7 @@ struct ChimeraVPNApp: App {
 /// UI-facing model that wraps NEVPNManager. Kept as an ObservableObject so
 /// the SwiftUI view can be a pure, stateless presentation of these values.
 final class VPNViewModel: ObservableObject {
-    @Published var serverAddr = "127.0.0.1:443"
+    @Published var serverAddr = "127.0.0.1:4789"
     @Published var seedHex = ""
     @Published var generation = 0
     @Published var pskHex = ""

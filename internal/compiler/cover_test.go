@@ -101,3 +101,25 @@ func TestCoverIsNotGlobalMagic(t *testing.T) {
 		t.Fatalf("cover lengths too concentrated: %v", lengths)
 	}
 }
+
+func TestWrapPadsIMCLengthBand(t *testing.T) {
+	g, err := genome.Generate(testSeed(7), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := make([]byte, 200)
+	if _, err := rand.Read(inner); err != nil {
+		t.Fatal(err)
+	}
+	wire := WrapHandshakeDatagram(g, inner)
+	if len(wire) >= 160 && len(wire) <= 700 {
+		t.Fatalf("wrapped length %d still in IMC 2020 160-700 band", len(wire))
+	}
+	got, err := UnwrapHandshakeDatagram(g, wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(got, inner) {
+		t.Fatal("unwrap lost the inner frame prefix")
+	}
+}

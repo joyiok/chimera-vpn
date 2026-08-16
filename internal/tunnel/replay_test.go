@@ -25,3 +25,17 @@ func TestReplayCacheIgnoresEmpty(t *testing.T) {
 		t.Fatal("empty inner must not count as replay")
 	}
 }
+
+func TestReplayCachePersistsAcrossLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/handshake.replay"
+	c := loadReplayCache(path)
+	inner := []byte("authenticated-first-frame-persist")
+	if c.seen(inner) {
+		t.Fatal("first observation must be fresh")
+	}
+	c2 := loadReplayCache(path)
+	if !c2.seen(inner) {
+		t.Fatal("reloaded cache missed persisted replay")
+	}
+}

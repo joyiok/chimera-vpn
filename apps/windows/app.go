@@ -15,7 +15,7 @@ import (
 
 // DefaultServerAddr 是 SelectServerDefault 返回的默认服务器地址。
 // 生产环境应替换为真实入口；这里使用本机/内网占位地址。
-const DefaultServerAddr = "127.0.0.1:443"
+const DefaultServerAddr = "127.0.0.1:4789"
 
 // appConfig 是持久化到可执行文件旁的 JSON 配置。
 // 字段名与前端 Config() 返回的 map key 保持一致（camelCase）。

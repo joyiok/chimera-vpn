@@ -18,7 +18,7 @@ PSK 另生成 32 随机字节（64 hex），不要复用 seed。
 ## 1. Linux 服务端
 
 ```bash
-sudo mkdir -p /etc/chimera
+sudo mkdir -p /etc/chimera /var/lib/chimera
 sudo cp configs/server.example.json /etc/chimera/server.json
 sudo chmod 0600 /etc/chimera/server.json   # 文件里是 PSK
 # 编辑 listen / seed_hex / psk_hex / tun.address / client_cidr

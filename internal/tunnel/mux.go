@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -457,6 +458,16 @@ func (m *ServerMux) WithJitter(max time.Duration) *ServerMux {
 	return m
 }
 
+// WithReplayPath loads (and later persists) the handshake/knock replay
+// table from path. Empty disables persistence. Call before Run.
+func (m *ServerMux) WithReplayPath(path string) *ServerMux {
+	if strings.TrimSpace(path) == "" {
+		return m
+	}
+	m.replays = loadReplayCache(path)
+	return m
+}
+
 // WithProtocols replaces the protocol list served by this mux. cps[0] is
 // the base generation (used for server-first knocks and decoy pairing).
 // Additional entries are tried for client-first first packets so a
@@ -532,9 +543,8 @@ func (m *ServerMux) timerLoop(ctx context.Context) {
 }
 
 // sweepSessions sends keepalives on idle established sessions and closes
-// those idle past the configured timeout. Keepalives reset lastActive, so
-// a client that has vanished entirely is reaped after idleTimeout while a
-// live one stays connected forever.
+// those idle past the configured timeout. Server-originated keepalives do
+// not touch lastActive, so a vanished client is still reaped.
 func (m *ServerMux) sweepSessions() {
 	m.mu.Lock()
 	tuns := make([]*ServerTunnel, 0, len(m.established))
@@ -682,8 +692,12 @@ func (m *ServerMux) selectHandshake(data []byte) (*compiler.Handshake, bool, err
 		if err != nil {
 			continue
 		}
-		if err := h.RecvStep(inner); err == nil {
-			if m.replays.seen(inner) {
+		trimmed, err := compiler.DeclaredFrame(spec, inner)
+		if err != nil {
+			continue
+		}
+		if err := h.RecvStep(trimmed); err == nil {
+			if m.replays.seen(trimmed) {
 				return nil, false, errProbe
 			}
 			return h, true, nil
@@ -701,7 +715,7 @@ func (m *ServerMux) selectHandshake(data []byte) (*compiler.Handshake, bool, err
 		if err != nil || !compiler.VerifyKnock(m.psk, inner) {
 			return nil, false, errProbe
 		}
-		if m.replays.seen(inner) {
+		if m.replays.seen(compiler.KnockReplayKey(inner)) {
 			return nil, false, errProbe
 		}
 		return serverFirst, false, nil

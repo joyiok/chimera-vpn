@@ -29,6 +29,9 @@ func TestLoadServerConfigDefaults(t *testing.T) {
 	if coreCfg.MaxSessions != 256 {
 		t.Fatalf("sessions=%d", coreCfg.MaxSessions)
 	}
+	if coreCfg.ReplayPath != "/var/lib/chimera/handshake.replay" {
+		t.Fatalf("replay=%q", coreCfg.ReplayPath)
+	}
 }
 
 func TestToCoreConfigExplicitWindowZero(t *testing.T) {
@@ -45,6 +48,19 @@ func TestToCoreConfigExplicitWindowZero(t *testing.T) {
 	}
 	if coreCfg.JitterMax != 0 {
 		t.Fatalf("jitter=%s want 0", coreCfg.JitterMax)
+	}
+}
+
+func TestToCoreConfigReplayPathEmpty(t *testing.T) {
+	empty := ""
+	cfg := defaultConfig()
+	cfg.ReplayPath = &empty
+	coreCfg, err := toCoreConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coreCfg.ReplayPath != "" {
+		t.Fatalf("replay=%q want empty (memory only)", coreCfg.ReplayPath)
 	}
 }
 

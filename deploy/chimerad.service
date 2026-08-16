@@ -26,6 +26,8 @@ RestrictNamespaces=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 DeviceAllow=/dev/net/tun rw
+# handshake.replay lives here; ProtectSystem=strict still allows it.
+StateDirectory=chimera
 # Config contains the PSK; operators should chmod 0600 /etc/chimera/server.json
 ReadOnlyPaths=/etc/chimera
 

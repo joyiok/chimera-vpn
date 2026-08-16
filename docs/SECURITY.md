@@ -27,8 +27,8 @@
    scanning 的有限防护；obfs4 要先证明共享秘密才说话）。server-first 现已要求
    认证 knock，随机探针不再拿到真实首帧。decoy 本身仍暴露“这里有一个会说话的 UDP 服务”。
 3. **重放**：序列号防了即时重放；会话密钥来自临时 ECDH，跨重启录制数据面无效。
-   握手首包哈希表是进程内、约 1 小时 TTL；进程重启后清空，长期延迟重放仍可能
-   在 seq 0 上通过 AEAD（与 Shadowsocks-libev 盐过滤器同一类权衡）。
+   握手首包哈希表默认落盘（`/var/lib/chimera/handshake.replay`，TTL 约 1 小时）；
+   写失败时退回内存。`replay_path: ""` 关闭持久化。
 4. **丢包恢复**：ACK/SKIP 推进窗口（跳过语义，不重传）；上层协议自带可靠性。
 5. **密码学**：AES-GCM 与 ChaCha20-Poly1305 均已接入；基因组默认只抽 AES 三档。
 6. **平台**：Windows 路由接管已实现待真机验收；移动端已接 protect/排除路由，未真机审计；

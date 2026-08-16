@@ -59,7 +59,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | chimerad 生产运维 | ✅ 完成 | 单客户端断开不杀进程；TUN 地址幂等；`-check-config`；systemd 硬化 |
 | FEP 握手封面 | ✅ 完成 | 随机可打印前缀 24–32 字节；Wu et al. USENIX Sec 2023 Ex2/Ex4 |
 | 认证 knock | ✅ 完成 | server-first 需 PSK-MAC；随机探针不再拿到真实首帧 |
-| 握手重放表 | ✅ 完成 | 已认证首包/knock SHA-256；IMC 2020 同类重放不建第二会话 |
+| 握手重放表 | ✅ 完成 | 已认证首包/knock SHA-256；默认可落盘；IMC 2020 同类重放不建第二会话 |
 
 ## 接手后先做什么
 

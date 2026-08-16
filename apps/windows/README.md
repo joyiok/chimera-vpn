@@ -190,7 +190,7 @@ const defaultServer = await window.go.chimera.App.SelectServerDefault()
 | `Stop() error` | 优雅停止传输层，应用进程保持存活 |
 | `Status() string` | 返回 `disconnected` / `connecting` / `connected` / `error: <detail>` |
 | `Config() (map[string]any, error)` | 返回当前保存的 `seedHex/generation/pskHex/serverAddr` |
-| `SelectServerDefault() string` | 返回默认服务器地址常量 `127.0.0.1:443` |
+| `SelectServerDefault() string` | 返回默认服务器地址常量 `127.0.0.1:4789` |
 
 ### 4.4 core_bridge 构建标签
 
@@ -226,7 +226,7 @@ client.Close() error
   "seedHex": "00ff...",
   "generation": 0,
   "pskHex": "11ee...",
-  "serverAddr": "127.0.0.1:443"
+  "serverAddr": "127.0.0.1:4789"
 }
 ```
 

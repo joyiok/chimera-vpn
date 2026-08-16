@@ -36,6 +36,7 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 ```
 
 封面长度由 `ProtocolFingerprint` 派生（不消耗基因组 DRBG），内容每次发送用 `crypto/rand` 重抽，避免“每服务器固定 magic”。
+落在 160–700 字节的握手数据报再追加可打印填充到物种派生的 701–1200 目标长度（Alice et al., IMC 2020 的重放触发带）。接收端用 length 字段裁掉尾部，transcript 只写入内层帧。
 这是为了命中 Wu et al., USENIX Security 2023（gfw.report）推断的 GFW
 全加密流量检测器豁免规则 Ex2（前 6 字节可打印 ASCII）和 Ex4（超过 20 字节连续可打印）。
 流模式 `EncodeStep` / `ReadFrame` **不加**封面。应用数据报不加封面（该检测器只看流的首个 payload）。
@@ -111,7 +112,8 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
   可改回 decoy 物种的一帧（decoy 同样带该诱饵物种的封面）。
 - server-first：客户端先发 `cover || nonce32 || HMAC-SHA256(PSK, "chimera-pgc/0/knock"||nonce)[:16]`。
   校验失败则不发送真实首帧（不再把任意 knock 当确认预言机）。
-- 已认证握手首包 / knock 的 SHA-256 记入约 1 小时、最多 65536 条的重放表；
+- 已认证握手首包 / knock 的 SHA-256 记入约 1 小时、最多 65536 条的重放表
+  （默认持久化 `/var/lib/chimera/handshake.replay`，`replay_path: ""` 仅内存）；
   跨地址的相同内层重放（IMC 2020 R1）不再完成第二次握手。字节级篡改的重放
   （R2–R5）仍被 AEAD 拒绝。
 - 新会话创建防护：首包 ≥16 字节、同源地址 1s 限速、全局 pending ≤1024、
@@ -124,7 +126,7 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 服务端 generation 窗口：并行编译 `generation … generation+window`（默认 window=2）。
   client-first 首包对窗口内每一代做封面剥离 + RecvStep，命中即绑定该代；server-first 的
   knock 仍只绑定基代（knock 无法携带代号）。客户端 `GenerationWindow` 在超时后探测 gen+1…。
-- 尚未实现：端口跳跃、车道 B/C、跨重启持久重放账本（进程内表，重启后清空）。
+- 尚未实现：端口跳跃、车道 B/C。重放账本默认可落盘；文件损坏或权限失败时退回内存表。
 
 ## 7. 密码学边界
 

@@ -44,11 +44,19 @@ func encodeKnock(psk []byte, rnd io.Reader) ([]byte, error) {
 
 // VerifyKnock reports whether inner is a well-formed knock under psk.
 func VerifyKnock(psk, inner []byte) bool {
-	if len(psk) == 0 || len(inner) != KnockInnerLen {
+	if len(psk) == 0 || len(inner) < KnockInnerLen {
 		return false
 	}
 	want := knockMAC(psk, inner[:knockNonceLen])
-	return hmac.Equal(inner[knockNonceLen:], want)
+	return hmac.Equal(inner[knockNonceLen:KnockInnerLen], want)
+}
+
+// KnockReplayKey is the prefix stored in the handshake replay table.
+func KnockReplayKey(inner []byte) []byte {
+	if len(inner) < KnockInnerLen {
+		return inner
+	}
+	return inner[:KnockInnerLen]
 }
 
 func knockMAC(psk, nonce []byte) []byte {

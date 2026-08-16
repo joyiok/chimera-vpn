@@ -17,6 +17,14 @@ const (
 	// printable) without being a global magic length.
 	CoverLenMin = 24
 	CoverLenMax = 32
+
+	// HandshakeMinWire / HandshakeMaxWire bound optional printable tail
+	// padding. Alice et al., IMC 2020: the GFW's Shadowsocks replay trigger
+	// concentrated on first payloads of 160–700 bytes. Handshake datagrams
+	// that land in that band are padded up to a species-derived size in
+	// [HandshakeMinWire, HandshakeMaxWire].
+	HandshakeMinWire = 701
+	HandshakeMaxWire = 1200
 )
 
 // CoverLen is the printable prefix length for one protocol species. It is
@@ -37,10 +45,10 @@ func CoverLen(g *genome.ProtocolGenome) int {
 func WrapHandshakeDatagram(g *genome.ProtocolGenome, frame []byte) []byte {
 	n := CoverLen(g)
 	cover := randomPrintable(n, rand.Reader)
-	out := make([]byte, 0, n+len(frame))
+	out := make([]byte, 0, n+len(frame)+64)
 	out = append(out, cover...)
 	out = append(out, frame...)
-	return out
+	return padHandshakeWire(g, out)
 }
 
 // UnwrapHandshakeDatagram strips the species cover. The prefix itself is not
@@ -69,6 +77,36 @@ func (h *Handshake) UnwrapDatagram(wire []byte) ([]byte, error) {
 		return nil, errors.New("nil handshake")
 	}
 	return UnwrapHandshakeDatagram(h.cp.Genome, wire)
+}
+
+func handshakePadTarget(g *genome.ProtocolGenome) int {
+	label := "chimera-pgc/0/hs-pad\x00"
+	if g != nil {
+		label += g.ProtocolFingerprint
+	}
+	sum := sha256.Sum256([]byte(label))
+	span := HandshakeMaxWire - HandshakeMinWire + 1
+	return HandshakeMinWire + int(sum[0])%span
+}
+
+func padHandshakeWire(g *genome.ProtocolGenome, wire []byte) []byte {
+	if len(wire) < 160 || len(wire) > 700 {
+		return wire
+	}
+	target := handshakePadTarget(g)
+	if target < HandshakeMinWire {
+		target = HandshakeMinWire
+	}
+	if target > HandshakeMaxWire {
+		target = HandshakeMaxWire
+	}
+	if target <= len(wire) {
+		target = HandshakeMinWire
+	}
+	if target <= len(wire) {
+		return wire
+	}
+	return append(wire, randomPrintable(target-len(wire), rand.Reader)...)
 }
 
 func randomPrintable(n int, rnd io.Reader) []byte {
