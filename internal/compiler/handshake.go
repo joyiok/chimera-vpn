@@ -70,6 +70,16 @@ func (h *Handshake) Progress() int { return h.idx }
 // Role returns the endpoint role.
 func (h *Handshake) Role() string { return h.role }
 
+// ProtocolGeneration is the genome generation this handshake was compiled
+// from. The server mux uses it to log which species in a generation window
+// a client actually matched.
+func (h *Handshake) ProtocolGeneration() uint64 {
+	if h == nil || h.cp == nil || h.cp.Genome == nil {
+		return 0
+	}
+	return h.cp.Genome.Generation
+}
+
 // CurrentSpec returns the layout of the next handshake step.
 func (h *Handshake) CurrentSpec() (genome.MessageSpec, error) {
 	if h.Done() {

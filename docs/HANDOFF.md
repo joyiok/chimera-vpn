@@ -52,7 +52,11 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 连接配额 | ✅ 完成 | `max_sessions`（chimerad 默认 256） |
 | 探测诱饵 | ✅ 完成 | 非法首包回 decoy 物种；限速+体积帽 |
 | 包长整形 | ✅ 完成 | 128/512/1024/1452 阶梯；无 pad 基因型跳过 |
+| 包长整形 | ✅ 完成 | 阶梯垫高；无 pad 基因型跳过 |
 | Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；待真机 |
+| 时序抖动 | ✅ 完成 | `jitter_ms` 默认 20ms；测试默认关闭 |
+| 服务端 generation 窗口 | ✅ 完成 | 并行接受 gen…gen+N；client-first 可轮换 |
+| chimerad 生产运维 | ✅ 完成 | 单客户端断开不杀进程；TUN 地址幂等；`-check-config`；systemd 硬化 |
 
 ## 接手后先做什么
 
@@ -64,8 +68,9 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
    - `docs/PROTOCOL.md`（线上格式与密码学）
    - `docs/BUILD.md`（各平台构建）
    - `docs/ROADMAP.md`（下一步与实现提示）
-5. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或 **任务 8 剩余项（时序抖动 / 服务端 generation 窗口）** 开始；
+5. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或车道 B/C 开始；
    若在 Windows 真机旁，先验收路由接管（`route print -4`）。
+   生产部署：`chmod 0600` 配置、`chimerad -check-config`、`deploy/chimerad.service`。
 
 ## 提交规范
 

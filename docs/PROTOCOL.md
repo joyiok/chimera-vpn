@@ -97,7 +97,12 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 探测诱饵：`WithDecoy` 对未认证首包回另一种子协议帧；体积不超过探测包的 3 倍且
   ≤1200 字节，全局 ≤32 帧/秒。`disable_decoy` 关闭。
 - 包长整形：应用记录按 128/512/1024/1452 阶梯垫高（超出末档不垫，避免 UDP 分片）。
-- 尚未实现：端口跳跃、时序抖动、服务端多 generation 并行。
+- 时序抖动：发送路径均匀延迟 `[0, jitter_ms]`（chimerad 默认 20ms）；ACK/keepalive
+  异步发送，避免卡住多路复用读循环。
+- 服务端 generation 窗口：并行编译 `generation … generation+window`（默认 window=2）。
+  client-first 首包对窗口内每一代做 RecvStep，命中即绑定该代；server-first 的
+  knock 仍只绑定基代（knock 无法携带代号）。客户端 `GenerationWindow` 在超时后探测 gen+1…。
+- 尚未实现：端口跳跃、车道 B/C、跨重启持久重放账本。
 
 ## 7. 密码学边界
 
@@ -106,5 +111,5 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 握手前字段用 PSK bootstrap 加密；临时 ECDH 提供前向保密。
 - 握手帧有 64 序号重放位图（流模式解码路径）；录制重放的握手帧会被拒绝。
 - `EstimatedEntropyBits` 只是生成器自记账，不是安全证明。
-- 尚未实现：时序抖动、密钥轮换（genome generation 服务端自动切换；客户端
-  `GenerationWindow` 已能探测 gen+1…）。
+- 密钥轮换：服务端并行接受 generation 窗口；客户端探测 gen+1…。server-first
+  基因型在窗口内仍只回答基代 knock。

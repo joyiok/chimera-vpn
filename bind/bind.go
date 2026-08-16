@@ -38,6 +38,7 @@ func Start(seedHex string, generation int64, pskHex string, serverAddr string) (
 		SeedHex:          seedHex,
 		Generation:       uint64(generation),
 		GenerationWindow: 2,
+		JitterMax:        20 * time.Millisecond,
 		PSKHex:           pskHex,
 		ServerAddr:       serverAddr,
 	})

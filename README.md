@@ -116,10 +116,10 @@ app record s2c  : "payload from the other direction" (round trip OK)
 
 ## 当前边界（重要）
 
-这**不是**高风险环境下的生产 VPN，但核心数据面与主要抗探测控件已经可运行：
+这**不是**高风险环境下的完整抗审查系统，但数据面与守护进程已按自建 VPN 生产运维收紧：
 
-- 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接、Windows 路由接管、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形
-- 未实现：真机 Android/iOS 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、时序抖动、服务端多 generation 并行
+- 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接、Windows 路由接管、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形、发送时序抖动、服务端 generation 窗口、chimerad 单会话故障隔离
+- 未实现：真机 Android/iOS 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、完整流量变形
 - `EstimatedEntropyBits` 是生成器自记账的近似值，不是安全证明
 
 ---

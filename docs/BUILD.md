@@ -43,6 +43,8 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
   "max_sessions": 256,
   "disable_decoy": false,
   "disable_shape": false,
+  "jitter_ms": 20,
+  "generation_window": 2,
   "tun": {"name":"chimera0","address":"10.99.0.1/24","mtu":1400}
 }
 
@@ -53,6 +55,10 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
 # rate_limit_kbps: 每客户端入口限速（KiB/s），0 = 不限速
 # max_sessions: 已建立会话上限（默认 256）
 # disable_decoy / disable_shape: 关闭探测诱饵 / 包长整形
+# jitter_ms: 发送时序抖动上限（省略或 0 = 20ms，负数关闭）
+# generation_window: 额外接受 gen..gen+N（省略 = 2，0 = 只接受配置的 generation）
+# 校验配置：chimerad -config /etc/chimera/server.json -check-config
+# 配置文件权限建议 0600（含 PSK）
 
 # 运行（需 root 或 CAP_NET_ADMIN）
 sudo ./dist/chimerad -config /etc/chimera/server.json

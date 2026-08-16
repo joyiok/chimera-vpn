@@ -5,13 +5,29 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/local/bin/chimerad -config /etc/chimera/server.json -check-config
 ExecStart=/usr/local/bin/chimerad -config /etc/chimera/server.json
 Restart=on-failure
 RestartSec=3
+LimitNOFILE=1048576
+# TUN + ip(8)/netlink. Do not run extra services as root without these bounds.
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-NoNewPrivileges=false
-LimitNOFILE=1048576
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+DeviceAllow=/dev/net/tun rw
+# Config contains the PSK; operators should chmod 0600 /etc/chimera/server.json
+ReadOnlyPaths=/etc/chimera
 
 [Install]
 WantedBy=multi-user.target

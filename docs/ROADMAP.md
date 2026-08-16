@@ -73,8 +73,10 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 - ~~NAT keepalive + 空闲会话回收~~ ✅（生产存活硬需求：`ControlKeepalive` 0x04、
   `WithIdleTimeout`；客户端 `SetKeepalive`）
 - ~~包长整形~~ ✅（`compiler.DefaultShapeBuckets` 128/512/1024/1452；无 pad_length
-  的基因型跳过；`disable_shape` 可关）。时序抖动仍缺。
-- 密钥轮换协议（客户端 `GenerationWindow` 已探测；服务端仍单 generation）。
+  的基因型跳过；`disable_shape` 可关）
+- ~~时序抖动~~ ✅（发送路径均匀 `[0, jitter_ms]`，默认 20ms；库默认关闭以免拖慢测试）
+- ~~密钥轮换协议~~ ✅（服务端 `GenerationWindow` 并行接受 gen…gen+N；客户端超时探测。
+  server-first knock 仍绑定基代，见 PROTOCOL.md）
 
 ## 9. 多机/分布式部署
 

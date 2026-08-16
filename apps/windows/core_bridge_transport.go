@@ -31,6 +31,7 @@ func startTransport(cfg appConfig) error {
 		SeedHex:          cfg.SeedHex,
 		Generation:       cfg.Generation,
 		GenerationWindow: 2,
+		JitterMax:        20 * time.Millisecond,
 		PSKHex:           cfg.PSKHex,
 		ServerAddr:       cfg.ServerAddr,
 	})

@@ -35,9 +35,11 @@ type Config struct {
 	// KeepaliveInterval refreshes NAT mappings on idle links (< 0 disables,
 	// 0 uses tunnel.DefaultKeepaliveInterval).
 	KeepaliveInterval time.Duration
-	// GenerationWindow: when the handshake times out, probe this many
-	// successive generations (server-side rotation without redeploying
-	// clients). 0 probes nothing.
+	// GenerationWindow: clients probe this many successive generations
+	// after a handshake timeout. Servers accept Generation through
+	// Generation+Window in parallel (client-first genotypes; server-first
+	// knocks still bind to the base generation). 0 means only the
+	// configured generation.
 	GenerationWindow uint64
 	// IdleTimeout (server) reaps sessions quiet for that long (<= 0 =
 	// never reap).
@@ -54,7 +56,14 @@ type Config struct {
 	// DisableShape turns off datagram length shaping (default: pad frames
 	// to compiler.DefaultShapeBuckets).
 	DisableShape bool
+	// JitterMax smears send timing uniformly in [0, JitterMax]. 0 disables
+	// jitter. Production servers should use tunnel.DefaultJitterMax.
+	JitterMax time.Duration
 }
+
+// MaxGenerationWindow caps how many extra generations a server will accept
+// (or a client will probe). Larger windows cost CPU on every probe packet.
+const MaxGenerationWindow = 8
 
 // NormalizeConfig validates and decodes a Config.
 func NormalizeConfig(cfg Config) (Config, error) {
@@ -71,6 +80,15 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.Cipher != "" && !genome.KnownCipher(cfg.Cipher) {
 		return cfg, fmt.Errorf("unknown cipher %q", cfg.Cipher)
+	}
+	if cfg.GenerationWindow > MaxGenerationWindow {
+		return cfg, fmt.Errorf("generation window %d exceeds max %d", cfg.GenerationWindow, MaxGenerationWindow)
+	}
+	if cfg.JitterMax < 0 {
+		cfg.JitterMax = 0
+	}
+	if cfg.JitterMax > tunnel.MaxJitterMax {
+		return cfg, fmt.Errorf("jitter %s exceeds max %s", cfg.JitterMax, tunnel.MaxJitterMax)
 	}
 	cfg.SeedHex = hex.EncodeToString(seed)
 	cfg.PSKHex = hex.EncodeToString(psk)
@@ -165,7 +183,7 @@ func startSession(cfg Config, generation uint64) (*tunnel.PacketTunnel, net.Pack
 		conn.Close()
 		return nil, nil, err
 	}
-	sess, err := tunnel.ClientHandshake(conn, remote, h)
+	sess, err := tunnel.ClientHandshakeWithJitter(conn, remote, h, cfg.JitterMax)
 	if err != nil {
 		conn.Close()
 		return nil, nil, err
@@ -174,6 +192,7 @@ func startSession(cfg Config, generation uint64) (*tunnel.PacketTunnel, net.Pack
 	if !cfg.DisableShape {
 		t.SetShapeBuckets(compiler.DefaultShapeBuckets)
 	}
+	t.SetJitter(cfg.JitterMax)
 	t.SetKeepalive(cfg.KeepaliveInterval)
 	return t, conn, nil
 }
@@ -311,13 +330,29 @@ func (s *Server) Start() error {
 		conn.Close()
 		return err
 	}
+	cps := []*compiler.CompiledProtocol{cp}
+	for i := uint64(1); i <= s.cfg.GenerationWindow; i++ {
+		ng, err := genome.GenerateWithCipher(seed, s.cfg.Generation+i, s.cfg.Cipher)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+		ncp, err := compiler.Compile(ng, psk)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+		cps = append(cps, ncp)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mux := tunnel.NewServerMux(conn, cp, psk)
-	mux.WithKeepalive(s.cfg.KeepaliveInterval).
+	mux.WithProtocols(cps).
+		WithKeepalive(s.cfg.KeepaliveInterval).
 		WithIdleTimeout(s.cfg.IdleTimeout).
 		WithRateLimit(s.cfg.RateLimitBytesPerSec).
-		WithMaxSessions(s.cfg.MaxSessions)
+		WithMaxSessions(s.cfg.MaxSessions).
+		WithJitter(s.cfg.JitterMax)
 	if !s.cfg.DisableShape {
 		mux.WithShapeBuckets(compiler.DefaultShapeBuckets)
 	}
@@ -354,7 +389,7 @@ func (s *Server) Accept(ctx context.Context) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn := &Conn{t: t}
+	conn := &Conn{t: t, generation: t.Generation()}
 	if pool != nil {
 		ip, err := pool.Allocate()
 		if err != nil {
@@ -422,6 +457,7 @@ func (s *Server) Close() error {
 type Conn struct {
 	t          *tunnel.ServerTunnel
 	assignedIP string
+	generation uint64
 	release    func()
 	releaseOne sync.Once
 }
@@ -434,6 +470,9 @@ func (c *Conn) ReceivePacket() ([]byte, error) { return c.t.ReceivePacket() }
 
 // AssignedIP returns the TUN address assigned by the server, if any.
 func (c *Conn) AssignedIP() string { return c.assignedIP }
+
+// Generation is the genome generation this client matched.
+func (c *Conn) Generation() uint64 { return c.generation }
 
 // Close removes this client session from the server and releases its
 // assigned address.

@@ -83,7 +83,7 @@ func (m *ServerMux) maybeDecoy(addr net.Addr, probe []byte) {
 	if !ok {
 		return
 	}
-	_, _ = m.conn.WriteTo(frame, addr)
+	writeDatagramAsync(m.conn, addr, frame, m.jitterMax)
 }
 
 // takeDecoyTokenLocked consumes one global decoy slot. Caller holds m.mu.

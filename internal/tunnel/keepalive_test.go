@@ -280,3 +280,54 @@ func TestTokenBucketUnit(t *testing.T) {
 		t.Error("refill did not credit tokens")
 	}
 }
+
+// TestIdleReapDespiteServerKeepalive: server-originated keepalives must not
+// reset lastActive, otherwise a vanished client is never reaped.
+func TestIdleReapDespiteServerKeepalive(t *testing.T) {
+	cp, psk := compileFor(t, 7103)
+
+	serverConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mux := NewServerMux(serverConn, cp, psk).
+		WithKeepalive(40 * time.Millisecond).
+		WithIdleTimeout(350 * time.Millisecond)
+	go mux.Run(ctx)
+
+	clientConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+	h, err := compiler.NewHandshake(cp, genome.DirClient, psk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := ClientHandshake(clientConn, serverConn.LocalAddr(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := NewPacketTunnel(clientConn, serverConn.LocalAddr(), sess)
+	defer ct.Close()
+
+	acceptCtx, acceptCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer acceptCancel()
+	st, err := mux.Accept(acceptCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	awaitTrue(t, 3*time.Second, func() bool {
+		select {
+		case <-st.closed:
+			return true
+		default:
+			return false
+		}
+	}, "idle session was not reaped while server keepalives were running")
+}

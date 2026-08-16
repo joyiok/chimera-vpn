@@ -2,8 +2,12 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"testing"
 	"time"
+
+	"chimera/internal/genome"
 )
 
 // runPair boots a server and one client with the given config overrides and
@@ -196,5 +200,93 @@ func TestMaxSessionsConfigWiring(t *testing.T) {
 	if err := second.Start(); err == nil {
 		second.Close()
 		t.Fatal("second client connected despite MaxSessions=1")
+	}
+}
+
+func TestNormalizeConfigWindowAndJitter(t *testing.T) {
+	base := Config{SeedHex: hex32(90), PSKHex: hex32(91), ServerAddr: "127.0.0.1:1"}
+	if _, err := NormalizeConfig(Config{SeedHex: base.SeedHex, PSKHex: base.PSKHex, ServerAddr: base.ServerAddr, GenerationWindow: MaxGenerationWindow + 1}); err == nil {
+		t.Fatal("oversized generation window accepted")
+	}
+	if _, err := NormalizeConfig(Config{SeedHex: base.SeedHex, PSKHex: base.PSKHex, ServerAddr: base.ServerAddr, JitterMax: time.Hour}); err == nil {
+		t.Fatal("oversized jitter accepted")
+	}
+}
+
+func TestServerGenerationWindow(t *testing.T) {
+	var seedHex, pskHex string
+	found := false
+	for i := 0; i < 2500; i++ {
+		seed := sha256.Sum256([]byte(fmt.Sprintf("core-window-%d", i)))
+		psk := sha256.Sum256([]byte(fmt.Sprintf("core-window-psk-%d", i)))
+		g0, err := genome.Generate(seed[:], 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g1, err := genome.Generate(seed[:], 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g0.Handshake[0].Direction != genome.DirClient || g1.Handshake[0].Direction != genome.DirClient {
+			continue
+		}
+		seedHex = fmt.Sprintf("%x", seed[:])
+		pskHex = fmt.Sprintf("%x", psk[:])
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("no seed where generations 0 and 1 are both client-first")
+	}
+
+	addr := freeUDPAddr(t)
+	serverCfg := Config{
+		SeedHex:          seedHex,
+		PSKHex:           pskHex,
+		ServerAddr:       addr,
+		Generation:       0,
+		GenerationWindow: 1,
+		DisableDecoy:     true,
+	}
+	server, err := NewServer(serverCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Close() })
+
+	clientCfg := serverCfg
+	clientCfg.Generation = 1
+	clientCfg.GenerationWindow = 0
+	client, err := NewClient(clientCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatalf("client on gen+1 should match server window: %v", err)
+	}
+	t.Cleanup(func() { client.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := server.Accept(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if conn.Generation() != 1 {
+		t.Fatalf("server matched gen %d, want 1", conn.Generation())
+	}
+}
+
+func TestClientStartAfterClose(t *testing.T) {
+	_, client, _ := runPair(t, nil)
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatalf("Start after Close: %v", err)
 	}
 }
