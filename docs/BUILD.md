@@ -100,6 +100,12 @@ go test -tags with_transport ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
 ```
 
+真正的 GUI 可执行文件必须在 Windows 上用 Wails + CGO 构建。GitHub Actions
+job `windows-wails`（`windows-latest`）会执行 `wails build -tags with_transport`，
+附带官方签名的 `wintun.dll`，并把 `ChimeraClient-windows-amd64` 作为
+workflow artifact 上传。PR / `main` 推送 / 手动 `workflow_dispatch` 都会跑。
+产物未代码签名，SmartScreen 可能提示，见 `apps/windows/build/README.md`。
+
 ## Android
 
 ```bash

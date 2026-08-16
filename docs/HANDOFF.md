@@ -45,14 +45,13 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | Android/iOS | ⚠️ 源码骨架 | 未真机构建 |
 | Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ✅ 完成 | ACK/SKIP 控制载荷；`-race` 测试含丢卡恢复用例 |
-| CI | ✅ 完成 | `.github/workflows/ci.yml`（根模块 + Windows 子模块 + gobind 冒烟） |
+| CI | ✅ 完成 | 根模块 + Windows 交叉编译 + **windows-latest Wails GUI 产物** + gobind |
 | ChaCha20-Poly1305 | ✅ 完成 | `cipher` 配置强制覆盖；端到端 + 不匹配拒连测试 |
 | 握手重放防护 | ✅ 完成 | 流模式 64 序号位图，录制重放被拒 |
 | NAT keepalive / 空闲回收 / 限速 | ✅ 完成 | `keepalive_sec`/`idle_timeout_sec`/`rate_limit_kbps` 配置 |
 | 连接配额 | ✅ 完成 | `max_sessions`（chimerad 默认 256） |
 | 探测诱饵 | ✅ 完成 | 非法首包回 decoy 物种；限速+体积帽 |
 | 包长整形 | ✅ 完成 | 128/512/1024/1452 阶梯；无 pad 基因型跳过 |
-| 包长整形 | ✅ 完成 | 阶梯垫高；无 pad 基因型跳过 |
 | Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；待真机 |
 | 时序抖动 | ✅ 完成 | `jitter_ms` 默认 20ms；测试默认关闭 |
 | 服务端 generation 窗口 | ✅ 完成 | 并行接受 gen…gen+N；client-first 可轮换 |

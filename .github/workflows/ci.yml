@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -62,6 +63,76 @@ jobs:
 
       - name: Cross-compile windows/amd64
         run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
+
+  # Real GUI: Wails + WebView2 needs Windows + CGO. The Ubuntu job above only
+  # proves the Go packages cross-compile; this job produces ChimeraClient.exe.
+  windows-wails:
+    name: Windows Wails GUI (with_transport)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            apps/windows/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up MinGW (CGO)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Add MinGW to PATH
+        shell: bash
+        run: echo "${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" >> "$GITHUB_PATH"
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
+
+      - name: Build ChimeraClient.exe
+        working-directory: apps/windows
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          gcc --version
+          go mod tidy
+          wails build -tags with_transport -m
+
+      - name: Fetch signed wintun.dll (amd64)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "wintun-0.14.1.zip"
+          $out = Join-Path $env:RUNNER_TEMP "wintun-out"
+          curl.exe -fsSL -o $zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          $expected = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+          if ($actual -ne $expected) { throw "wintun hash mismatch: $actual" }
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $bin = "apps/windows/build/bin"
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Copy-Item "$out/wintun/bin/amd64/wintun.dll" "$bin/wintun.dll"
+          Copy-Item "$out/wintun/LICENSE.txt" "$bin/wintun-LICENSE.txt"
+
+      - name: Upload Windows client
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChimeraClient-windows-amd64
+          path: |
+            apps/windows/build/bin/ChimeraClient.exe
+            apps/windows/build/bin/wintun.dll
+            apps/windows/build/bin/wintun-LICENSE.txt
+          if-no-files-found: error
+          retention-days: 14
 
   gobind-smoke:
     name: gobind signature smoke test

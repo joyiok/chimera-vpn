@@ -131,6 +131,17 @@ build\dev.bat
 build\dev.bat with_transport
 ```
 
+### 3.4 CI 构建
+
+本机没有 Windows 时，用 GitHub Actions job `windows-wails`：
+
+- runner：`windows-latest`（Wails + CGO + WebView2；Linux 交叉编译出不了 GUI）
+- 命令：`wails build -tags with_transport`
+- 产物 artifact：`ChimeraClient-windows-amd64`（`ChimeraClient.exe` + 官方签名 `wintun.dll`）
+
+在 Actions 打开对应 run 下载 artifact，或手动 `workflow_dispatch`。
+未签名 exe 可能触发 SmartScreen，见 `build/README.md`。
+
 ---
 
 ## 4. 架构说明

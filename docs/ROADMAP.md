@@ -19,7 +19,8 @@
 ## 2. ~~GitHub Actions CI~~（已完成）
 
 `.github/workflows/ci.yml`：根模块 fmt/vet/test-race/build、Windows 子模块双标签
-test/vet + amd64 交叉编译、gobind Java 签名冒烟。
+test/vet + amd64 交叉编译、**windows-latest 上 Wails GUI（`with_transport`）并上传
+`ChimeraClient.exe` + `wintun.dll`**、gobind Java 签名冒烟。
 
 ## 3. ~~长期丢包恢复（packet ACK）~~（已完成）
 
