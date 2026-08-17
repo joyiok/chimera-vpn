@@ -20,16 +20,18 @@ func main() {
 	app := NewChimeraApp()
 
 	err := wails.Run(&options.App{
-		Title:     "CHIMERA Windows 客户端",
-		Width:     1080,
-		Height:    720,
-		MinWidth:  860,
-		MinHeight: 560,
+		Title:             "CHIMERA Windows 客户端",
+		Width:             1080,
+		Height:            720,
+		MinWidth:          860,
+		MinHeight:         560,
+		HideWindowOnClose: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 13, G: 17, B: 23, A: 255},
 		OnStartup:        app.startup,
+		OnBeforeClose:    app.beforeClose,
 		Bind: []interface{}{
 			app,
 		},

@@ -83,7 +83,7 @@ PR / `main` 推送 / 手动 `workflow_dispatch` 都会跑。Debug APK 可 sidelo
 
 - 应用使用 `VpnService.Builder` 建立 TUN 接口：
   - 本地地址：优先使用服务器自动分配的地址（`10.99.0.2` 起）；服务端未分配时回退到界面填写的 `10.99.0.2/24`
-  - 路由：`0.0.0.0/0`（捕获并转发设备全部流量）
+  - 路由：`0.0.0.0/0`；尽力再加 IPv6 `::/0`（先 `fd99::2/64`，失败则跳过）
   - DNS：`1.1.1.1`、`8.8.8.8`
   - MTU：`1400`
 - 建立成功后，`ChimeraVpnService` 调用 Go 绑定 `bind.Bind.start(...)`，立刻
@@ -92,6 +92,8 @@ PR / `main` 推送 / 手动 `workflow_dispatch` 都会跑。Debug APK 可 sidelo
   然后启动两条协程：
   1. `bind.Receive(handle)` → 写入 TUN 文件描述符（Go 协议栈发往设备的 IP 包）；
   2. TUN 文件描述符读取（单次最多 32767 字节）→ `bind.Send(handle, packet)`（设备发往协议栈的 IP 包）。
+- 通知栏显示上下行流量，并提供「断开」「重连」；可添加快捷设置磁贴开关 VPN。
+- 入站静默 90s（`IdleMillis`）或 Receive 失败时，先对新 UDP 套接字 `protect`，再换 Go 会话；分配地址变了才重建 TUN。
 - 断开时先关闭 TUN 文件描述符，再调用 `bind.Bind.stop(handle)`。
 
 ## 注意事项

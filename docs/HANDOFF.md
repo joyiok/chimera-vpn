@@ -44,8 +44,8 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 地址自动分配 | ✅ 完成 | `10.99.0.0/24` 池测试 |
 | Linux 服务端 | ✅ 代码完成 | 编译/静态检查；TUN 需 root 实机；`scripts/selftest.sh` 覆盖 -no-tun 握手+回显 |
 | Linux CLI 客户端 | ✅ 代码完成 | `chimerac -check` + selftest；TUN/默认路由需 root；入站静默 90s 自动重连 |
-| Windows GUI | ✅ 控制面 + Wintun 包泵 + 默认路由接管 | Linux 上交叉编译到 Windows 通过；路由需真机验收 |
-| Android/iOS | ⚠️ CI 可出包 | Android debug APK + iOS XCFramework 由 Actions 构建；真机与 IPA 签名未做 |
+| Windows GUI | ✅ 控制面 + 托盘 + 流量图 + 入口列表 | Linux 交叉编译；Wails 真机托盘/路由待验收 |
+| Android/iOS | ⚠️ CI 可出包 | protect / excludedRoutes / IdleMillis 重连已接；真机与 IPA 签名未做 |
 | Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ✅ 完成 | ACK/SKIP 控制载荷；`-race` 测试含丢卡恢复用例 |
 | CI | ✅ 完成 | 根模块 + **userspace selftest** + Linux CLI artifact + Windows 交叉编译 + **windows-latest Wails GUI** + **ubuntu Android debug APK** + **macos iOS XCFramework** + gobind |
@@ -55,7 +55,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 连接配额 | ✅ 完成 | `max_sessions`（chimerad 默认 256） |
 | 探测诱饵 | ✅ 完成 | 非法首包回 decoy 物种；限速+体积帽 |
 | 包长整形 | ✅ 完成 | 128/512/1024/1452 阶梯；无 pad 基因型跳过 |
-| Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；待真机 |
+| Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；IdleMillis 重连；待真机 |
 | 时序抖动 | ✅ 完成 | 截断指数 IAT，上限 20ms；对齐 obfs4/CCS 2015 |
 | 服务端 generation 窗口 | ✅ 完成 | 并行接受 gen…gen+N；client-first 可轮换 |
 | chimerad 生产运维 | ✅ 完成 | 单客户端断开不杀进程；TUN 地址幂等；`-check-config`；systemd 硬化 |

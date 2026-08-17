@@ -10,6 +10,8 @@ objects = {
 A10000000000000000000021 /* ChimeraVPNApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* ChimeraVPNApp.swift */; };
 A10000000000000000000022 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000B /* PacketTunnelProvider.swift */; };
 A10000000000000000000023 /* GoBind.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* GoBind.swift */; };
+A10000000000000000000031 /* TunnelShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000030 /* TunnelShare.swift */; };
+A10000000000000000000032 /* TunnelShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000030 /* TunnelShare.swift */; };
 A10000000000000000000024 /* ChimeraPacketTunnel.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* ChimeraPacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -47,6 +49,7 @@ A1000000000000000000000B /* PacketTunnelProvider.swift */ = {isa = PBXFileRefere
 A1000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 A1000000000000000000000D /* ChimeraPacketTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ChimeraPacketTunnel.entitlements; sourceTree = "<group>"; };
 A1000000000000000000000E /* GoBind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoBind.swift; sourceTree = "<group>"; };
+A10000000000000000000030 /* TunnelShare.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelShare.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +76,7 @@ children = (
 A10000000000000000000004 /* ChimeraVPN */,
 A10000000000000000000005 /* ChimeraPacketTunnel */,
 A1000000000000000000000E /* GoBind.swift */,
+A10000000000000000000030 /* TunnelShare.swift */,
 A10000000000000000000003 /* Products */,
 );
 sourceTree = "<group>";
@@ -205,6 +209,7 @@ isa = PBXSourcesBuildPhase;
 buildActionMask = 2147483647;
 files = (
 A10000000000000000000021 /* ChimeraVPNApp.swift in Sources */,
+A10000000000000000000031 /* TunnelShare.swift in Sources */,
 );
 runOnlyForDeploymentPostprocessing = 0;
 };
@@ -214,6 +219,7 @@ buildActionMask = 2147483647;
 files = (
 A10000000000000000000022 /* PacketTunnelProvider.swift in Sources */,
 A10000000000000000000023 /* GoBind.swift in Sources */,
+A10000000000000000000032 /* TunnelShare.swift in Sources */,
 );
 runOnlyForDeploymentPostprocessing = 0;
 };

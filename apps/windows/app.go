@@ -20,11 +20,17 @@ const DefaultServerAddr = "127.0.0.1:4789"
 // appConfig 是持久化到可执行文件旁的 JSON 配置。
 // 字段名与前端 Config() 返回的 map key 保持一致（camelCase）。
 type appConfig struct {
-	SeedHex    string `json:"seedHex"`
-	Generation uint64 `json:"generation"`
-	PSKHex     string `json:"pskHex"`
-	ServerAddr string `json:"serverAddr"`
-	TunIP      string `json:"tunIP"` // fallback when the server has no client_cidr
+	SeedHex    string        `json:"seedHex"`
+	Generation uint64        `json:"generation"`
+	PSKHex     string        `json:"pskHex"`
+	ServerAddr string        `json:"serverAddr"`
+	TunIP      string        `json:"tunIP"` // fallback when the server has no client_cidr
+	Servers    []savedServer `json:"servers,omitempty"`
+}
+
+type savedServer struct {
+	Name string `json:"name"`
+	Addr string `json:"addr"`
 }
 
 // ChimeraApp 是 Wails 绑定的后端结构体。
@@ -36,6 +42,7 @@ type ChimeraApp struct {
 	cfg     appConfig
 	status  string // disconnected / connecting / connected / error
 	lastErr string
+	quit    bool
 
 	wdOnce sync.Once
 }
@@ -58,6 +65,7 @@ func (a *ChimeraApp) startup(ctx context.Context) {
 	if err := a.loadConfig(); err != nil {
 		log.Printf("[ChimeraApp] 读取已保存配置失败: %v", err)
 	}
+	startTray(a)
 }
 
 // Start 校验参数、保存配置到可执行文件旁，并启动协议传输层。
@@ -130,6 +138,10 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 	a.status = "connected"
 	a.lastErr = ""
 	a.mu.Unlock()
+	a.rememberServer(cfg.ServerAddr, cfg.ServerAddr)
+	if err := a.saveConfig(); err != nil {
+		log.Printf("[ChimeraApp] 保存入口列表失败: %v", err)
+	}
 	a.startWatchdog()
 	return nil
 }
@@ -210,7 +222,106 @@ func (a *ChimeraApp) Config() (map[string]any, error) {
 		"pskHex":     a.cfg.PSKHex,
 		"serverAddr": a.cfg.ServerAddr,
 		"tunIP":      a.cfg.TunIP,
+		"servers":    a.cfg.Servers,
 	}, nil
+}
+
+// Servers returns saved VPN entry points (host:port), not protocol secrets.
+func (a *ChimeraApp) Servers() []savedServer {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]savedServer, len(a.cfg.Servers))
+	copy(out, a.cfg.Servers)
+	return out
+}
+
+// RememberServer upserts an entry by address and writes chimera-config.json.
+func (a *ChimeraApp) RememberServer(name, addr string) error {
+	a.mu.Lock()
+	a.cfg.Servers = upsertServer(a.cfg.Servers, name, addr)
+	a.mu.Unlock()
+	return a.saveConfig()
+}
+
+// ForgetServer removes a saved entry by address.
+func (a *ChimeraApp) ForgetServer(addr string) error {
+	addr = strings.TrimSpace(addr)
+	a.mu.Lock()
+	filtered := a.cfg.Servers[:0]
+	for _, s := range a.cfg.Servers {
+		if !strings.EqualFold(s.Addr, addr) {
+			filtered = append(filtered, s)
+		}
+	}
+	a.cfg.Servers = filtered
+	a.mu.Unlock()
+	return a.saveConfig()
+}
+
+// Traffic is cumulative TUN IP bytes since the current session started.
+func (a *ChimeraApp) Traffic() map[string]any {
+	sent, recv := trafficBytes()
+	return map[string]any{
+		"sent": sent,
+		"recv": recv,
+	}
+}
+
+// HideToTray hides the window; the process stays in the notification area.
+func (a *ChimeraApp) HideToTray() {
+	if a.ctx != nil {
+		runtimeWindowHide(a.ctx)
+	}
+}
+
+// QuitApp tears down the tunnel and exits (tray “退出”).
+func (a *ChimeraApp) QuitApp() {
+	a.mu.Lock()
+	a.quit = true
+	a.mu.Unlock()
+	_ = a.Stop()
+	stopTray()
+	if a.ctx != nil {
+		runtimeQuit(a.ctx)
+	}
+}
+
+func (a *ChimeraApp) beforeClose(ctx context.Context) (prevent bool) {
+	a.mu.Lock()
+	quitting := a.quit
+	a.mu.Unlock()
+	if quitting {
+		stopTray()
+		return false
+	}
+	runtimeWindowHide(ctx)
+	return true
+}
+
+func (a *ChimeraApp) rememberServer(name, addr string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cfg.Servers = upsertServer(a.cfg.Servers, name, addr)
+}
+
+func upsertServer(list []savedServer, name, addr string) []savedServer {
+	addr = strings.TrimSpace(addr)
+	name = strings.TrimSpace(name)
+	if addr == "" {
+		return list
+	}
+	if name == "" {
+		name = addr
+	}
+	for i, s := range list {
+		if strings.EqualFold(s.Addr, addr) {
+			if name != "" && name != addr {
+				list[i].Name = name
+			}
+			return list
+		}
+	}
+	return append(list, savedServer{Name: name, Addr: addr})
 }
 
 // SelectServerDefault 返回默认服务器地址常量。

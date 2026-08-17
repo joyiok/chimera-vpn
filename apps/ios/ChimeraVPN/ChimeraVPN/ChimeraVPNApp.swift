@@ -20,12 +20,22 @@ final class VPNViewModel: ObservableObject {
     @Published var tunIP = "10.99.0.2"
     @Published var status = "未连接"
     @Published var isBusy = false
+    @Published var servers: [SavedServer] = []
+    @Published var logLines: [String] = []
+    @Published var trafficText = "↑ 0 B    ↓ 0 B"
 
     private let vpnManager = NEVPNManager.shared()
     private let defaults = UserDefaults.standard
+    private var ticker: Timer?
 
     init() {
         restoreForm()
+        restoreServers()
+        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshTunnelShare()
+            }
+        }
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name.NEVPNStatusDidChange,
             object: vpnManager.connection,
@@ -68,6 +78,7 @@ final class VPNViewModel: ObservableObject {
         isBusy = true
         status = "正在准备配置..."
         persistForm()
+        rememberCurrent()
 
         let protocolConfiguration = NETunnelProviderProtocol()
         protocolConfiguration.providerBundleIdentifier = "com.chimera.vpn.tunnel"
@@ -155,6 +166,47 @@ final class VPNViewModel: ObservableObject {
         if let v = defaults.string(forKey: "pskHex") { pskHex = v }
         if let v = defaults.string(forKey: "tunIP"), !v.isEmpty { tunIP = v }
     }
+
+    private func restoreServers() {
+        guard let data = defaults.data(forKey: "servers"),
+              let list = try? JSONDecoder().decode([SavedServer].self, from: data) else { return }
+        servers = list
+    }
+
+    private func persistServers() {
+        if let data = try? JSONEncoder().encode(servers) {
+            defaults.set(data, forKey: "servers")
+        }
+    }
+
+    func rememberCurrent() {
+        let addr = serverAddr.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !addr.isEmpty else { return }
+        if servers.contains(where: { $0.addr.caseInsensitiveCompare(addr) == .orderedSame }) {
+            persistServers()
+            return
+        }
+        servers.insert(SavedServer(name: addr, addr: addr), at: 0)
+        persistServers()
+    }
+
+    func forget(_ server: SavedServer) {
+        servers.removeAll { $0.addr.caseInsensitiveCompare(server.addr) == .orderedSame }
+        persistServers()
+    }
+
+    private func refreshTunnelShare() {
+        logLines = TunnelShare.logs()
+        let t = TunnelShare.traffic()
+        trafficText = "↑ \(TunnelShare.formatBytes(t.sent))    ↓ \(TunnelShare.formatBytes(t.recv))"
+        refreshStatus()
+    }
+}
+
+struct SavedServer: Codable, Identifiable, Hashable {
+    var name: String
+    var addr: String
+    var id: String { addr.lowercased() }
 }
 
 struct ContentView: View {
@@ -181,6 +233,38 @@ struct ContentView: View {
                         .disableAutocorrection(true)
                 }
 
+                Section("流量") {
+                    Text(model.trafficText)
+                        .font(.system(.body, design: .monospaced))
+                }
+
+                Section("节点") {
+                    if model.servers.isEmpty {
+                        Text("还没有保存的入口。连接成功后会自动记下当前 host:port。")
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(model.servers) { server in
+                        HStack {
+                            Button(action: { model.serverAddr = server.addr }) {
+                                VStack(alignment: .leading) {
+                                    Text(server.name)
+                                    Text(server.addr)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button("删除") {
+                                model.forget(server)
+                            }
+                            .foregroundColor(.red)
+                        }
+                    }
+                    Button("保存当前入口") {
+                        model.rememberCurrent()
+                    }
+                }
+
                 Section("状态") {
                     HStack {
                         Text(model.status)
@@ -200,6 +284,16 @@ struct ContentView: View {
                     Button("断开") {
                         model.disconnect()
                     }
+                }
+
+                Section("日志") {
+                    ScrollView {
+                        Text(model.logLines.isEmpty ? "隧道日志会写到 App Group。扩展未签名或未开 group 时这里是空的。" : model.logLines.joined(separator: "\n"))
+                            .font(.system(.footnote, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(minHeight: 160)
                 }
             }
             .navigationTitle("Chimera VPN")

@@ -45,3 +45,5 @@ func stopPacketBridge() {}
 
 // linkIdleFor 桩实现：无真实传输层，链路视为不空闲。
 func linkIdleFor() time.Duration { return 0 }
+
+func trafficBytes() (sent, recv uint64) { return 0, 0 }

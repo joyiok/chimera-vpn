@@ -14,7 +14,12 @@
     <string name="status_disconnected">已断开</string>
     <string name="log_label">日志</string>
     <string name="log_empty">暂无日志</string>
+    <string name="reconnect">重连</string>
     <string name="notification_running">VPN 正在运行</string>
+    <string name="traffic_idle">↑ 0 B    ↓ 0 B</string>
+    <string name="nodes_label">节点</string>
+    <string name="save_node">保存入口</string>
+    <string name="tile_label">Chimera</string>
     <string name="toast_fill_all">请填写服务器地址、Seed、Generation、PSK 和本机地址</string>
     <string name="toast_generation_invalid">Generation 必须是整数</string>
     <string name="toast_vpn_denied">未授予 VPN 权限</string>

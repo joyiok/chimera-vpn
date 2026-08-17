@@ -58,6 +58,13 @@ func linkIdleFor() time.Duration {
 	return transportClient.IdleFor()
 }
 
+func trafficBytes() (sent, recv uint64) {
+	if transportClient == nil {
+		return 0, 0
+	}
+	return transportClient.Bytes()
+}
+
 // stopTransport 关闭真实核心客户端。
 func stopTransport() error {
 	if transportClient == nil {

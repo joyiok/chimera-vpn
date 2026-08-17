@@ -93,7 +93,7 @@ sudo ./dist/chimerac -config ./local/client.json -take-route
    `ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。
 2. 允许未知来源后 sideload `app-debug.apk`。这是 debug 签名，不是 Play 发布包。
 3. 填入与服务器相同的 seed / generation / PSK / `host:port`。
-4. **尚未真机验收**；`VpnService.protect(fd)` 已接进源码。
+4. **尚未真机验收**；`VpnService.protect(fd)` 与入站静默重连已接进源码。
 
 本机构建：`apps/android/build-android-core.sh` 后 Android Studio 或 `gradle assembleDebug`。
 
@@ -103,7 +103,7 @@ sudo ./dist/chimerac -config ./local/client.json -take-route
    `ChimeraBind-ios-xcframework`。
 2. 用 Xcode 把 `ChimeraBind.xcframework` 链到 `ChimeraPacketTunnel`，配好 Team /
    App Group / Network Extension 后真机运行。CI **不会**出已签名 IPA。
-3. **尚未真机验收**；服务器地址 `/32` excludedRoutes 已接进源码。
+3. **尚未真机验收**；服务器地址 `/32` excludedRoutes 与入站静默重连已接进源码。
 
 本机构建：macOS 上 `apps/ios/build-ios-core.sh`。
 

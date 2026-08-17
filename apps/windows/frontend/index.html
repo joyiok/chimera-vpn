@@ -12,11 +12,28 @@
           <div class="logo">C</div>
           <div>
             <h1>CHIMERA</h1>
-            <p>Windows 客户端 · Wails v2</p>
+            <p>Windows 客户端 · 关闭窗口会留在托盘</p>
           </div>
         </div>
-        <div id="statusBadge" class="badge disconnected">未连接</div>
+        <div class="top-actions">
+          <div id="statusBadge" class="badge disconnected">未连接</div>
+          <button id="trayBtn" class="ghost" type="button">隐藏到托盘</button>
+        </div>
       </header>
+
+      <section class="stats" aria-label="流量">
+        <div>
+          <span class="stats-label">上行</span>
+          <strong id="txTotal">0 B</strong>
+          <span id="txRate" class="rate">0 B/s</span>
+        </div>
+        <div>
+          <span class="stats-label">下行</span>
+          <strong id="rxTotal">0 B</strong>
+          <span id="rxRate" class="rate">0 B/s</span>
+        </div>
+        <canvas id="spark" width="640" height="72" aria-hidden="true"></canvas>
+      </section>
 
       <main>
         <section class="card">
@@ -28,9 +45,14 @@
           </label>
 
           <label class="field">
+            <span>入口名称（可选，保存到节点列表）</span>
+            <input id="serverName" type="text" placeholder="例如 vps-hk" autocomplete="off" />
+          </label>
+
+          <label class="field">
             <span>Seed（协议种子）</span>
             <div class="secret-row">
-              <input id="seedHex" type="password" placeholder="十六进制 seed" autocomplete="off" />
+              <input id="seedHex" type="password" placeholder="64 位十六进制" autocomplete="off" />
               <button type="button" data-toggle="seedHex">显示</button>
             </div>
           </label>
@@ -43,7 +65,7 @@
           <label class="field">
             <span>PSK（预共享密钥）</span>
             <div class="secret-row">
-              <input id="pskHex" type="password" placeholder="十六进制 PSK" autocomplete="off" />
+              <input id="pskHex" type="password" placeholder="64 位十六进制" autocomplete="off" />
               <button type="button" data-toggle="pskHex">显示</button>
             </div>
           </label>
@@ -51,35 +73,27 @@
           <div class="actions">
             <button id="connectBtn" class="primary">连接</button>
             <button id="disconnectBtn" class="ghost">断开</button>
-            <button id="defaultServerBtn" class="ghost">默认服务器</button>
+            <button id="saveServerBtn" class="ghost">保存入口</button>
           </div>
         </section>
 
         <section class="card">
-          <h2>运行日志</h2>
-          <div id="logs" class="logs">
-            <div class="log muted">就绪，等待操作。</div>
+          <h2>节点</h2>
+          <p class="muted">只保存 host:port，Seed/PSK 仍用上面这一套。</p>
+          <div id="serverList" class="server-list">
+            <div class="muted">还没有保存的入口。连上一次，或点「保存入口」。</div>
           </div>
         </section>
 
-        <section class="card settings">
-          <h2>设置</h2>
-          <label class="check">
-            <input id="autoLoad" type="checkbox" checked />
-            启动时读取已保存配置
-          </label>
-          <label class="check">
-            <input id="autoStatus" type="checkbox" checked />
-            每 2 秒刷新状态
-          </label>
-          <p class="muted">
-            配置文件保存在可执行文件旁：<code>chimera-config.json</code>。
-          </p>
-          <button id="reloadConfigBtn" class="ghost">重新载入配置</button>
+        <section class="card logs-card">
+          <h2>运行日志</h2>
+          <div id="logs" class="logs">
+            <div class="log muted">就绪。关窗口会进托盘，托盘右键可连接/断开/退出。</div>
+          </div>
         </section>
       </main>
 
-      <footer>CHIMERA · Go + WebView2 · 前端由 Vite 构建</footer>
+      <footer>CHIMERA · 托盘 + 流量 + 入口列表</footer>
     </div>
 
     <script type="module" src="/src/main.js"></script>

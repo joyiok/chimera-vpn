@@ -2,6 +2,7 @@
 
 基于 **Wails v2** 的 Windows 图形客户端：Go 后端负责协议控制与配置持久化，
 HTML/JS/CSS 前端运行在 WebView2 中，前端通过 Wails 绑定调用后端方法。
+关窗口会进系统托盘（右键连接/断开/退出）；界面含流量火花图和 host:port 入口列表。
 
 > 目录约定：本目录只包含 Windows 客户端。仓库根模块路径为 `chimera`，
 > 核心传输层位于 `../../core`（`chimera/core`）。本应用默认以 stub 方式编译；

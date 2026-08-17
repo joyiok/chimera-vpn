@@ -1,19 +1,13 @@
 import './style.css'
 
-// Wails v2 会把 package main 中的绑定生成到 window.go.main.App。
-// 需求中约定的调用路径为 window.go.chimera.App；这里做一个轻量别名，
-// 让后续代码统一使用 window.go.chimera.App。
-// 注意：不在模块加载时缓存 api，避免 Wails runtime 尚未注入 window.go。
 function getAPI() {
   if (!window.go) return null
-
   if (!window.go.chimera && window.go.main) {
     window.go.chimera = window.go.main
   }
   return window.go.chimera?.App ?? null
 }
 
-// Wails runtime 通常在页面脚本之前注入；这里做短轮询，兼容模块脚本先执行的情况。
 async function waitForAPI(timeoutMs = 5000) {
   const start = Date.now()
   while (!getAPI()) {
@@ -27,16 +21,21 @@ const $ = (id) => document.getElementById(id)
 const els = {
   statusBadge: $('statusBadge'),
   serverAddr: $('serverAddr'),
+  serverName: $('serverName'),
   seedHex: $('seedHex'),
   generation: $('generation'),
   pskHex: $('pskHex'),
   connectBtn: $('connectBtn'),
   disconnectBtn: $('disconnectBtn'),
-  defaultServerBtn: $('defaultServerBtn'),
-  reloadConfigBtn: $('reloadConfigBtn'),
+  saveServerBtn: $('saveServerBtn'),
+  trayBtn: $('trayBtn'),
   logs: $('logs'),
-  autoLoad: $('autoLoad'),
-  autoStatus: $('autoStatus'),
+  serverList: $('serverList'),
+  txTotal: $('txTotal'),
+  rxTotal: $('rxTotal'),
+  txRate: $('txRate'),
+  rxRate: $('rxRate'),
+  spark: $('spark'),
 }
 
 const STATUS_TEXT = {
@@ -46,6 +45,11 @@ const STATUS_TEXT = {
   error: '错误',
 }
 
+const samples = []
+let lastSent = 0
+let lastRecv = 0
+let lastTs = 0
+
 function log(message, level = 'info') {
   const line = document.createElement('div')
   line.className = `log ${level}`
@@ -54,6 +58,14 @@ function log(message, level = 'info') {
   els.logs.appendChild(line)
   while (els.logs.children.length > 200) els.logs.firstChild.remove()
   els.logs.scrollTop = els.logs.scrollHeight
+}
+
+function formatBytes(n) {
+  const v = Number(n) || 0
+  if (v < 1024) return `${v} B`
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(2)} MB`
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 function updateBadge(status, detail = '') {
@@ -83,6 +95,117 @@ function setBusy(busy) {
   els.connectBtn.disabled = busy
 }
 
+function drawSpark() {
+  const canvas = els.spark
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  const dpr = window.devicePixelRatio || 1
+  const w = canvas.clientWidth
+  const h = canvas.clientHeight
+  canvas.width = Math.max(1, Math.floor(w * dpr))
+  canvas.height = Math.max(1, Math.floor(h * dpr))
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  ctx.strokeStyle = '#30363d'
+  ctx.beginPath()
+  ctx.moveTo(0, h - 0.5)
+  ctx.lineTo(w, h - 0.5)
+  ctx.stroke()
+  if (samples.length < 2) return
+  const max = Math.max(1, ...samples)
+  ctx.strokeStyle = '#388bfd'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  samples.forEach((v, i) => {
+    const x = (i / (samples.length - 1)) * w
+    const y = h - (v / max) * (h - 6) - 3
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+}
+
+async function refreshTraffic() {
+  const api = getAPI()
+  if (!api?.Traffic) return
+  try {
+    const t = await api.Traffic()
+    const sent = Number(t.sent) || 0
+    const recv = Number(t.recv) || 0
+    const now = Date.now()
+    let up = 0
+    let down = 0
+    if (lastTs) {
+      const dt = Math.max(0.2, (now - lastTs) / 1000)
+      up = Math.max(0, (sent - lastSent) / dt)
+      down = Math.max(0, (recv - lastRecv) / dt)
+    }
+    lastSent = sent
+    lastRecv = recv
+    lastTs = now
+    els.txTotal.textContent = formatBytes(sent)
+    els.rxTotal.textContent = formatBytes(recv)
+    els.txRate.textContent = `${formatBytes(up)}/s`
+    els.rxRate.textContent = `${formatBytes(down)}/s`
+    samples.push(up + down)
+    if (samples.length > 60) samples.shift()
+    drawSpark()
+  } catch {
+    // stub build has Traffic but zeros
+  }
+}
+
+function renderServers(list) {
+  const items = Array.isArray(list) ? list : []
+  if (!items.length) {
+    els.serverList.innerHTML = '<div class="muted">还没有保存的入口。连上一次，或点「保存入口」。</div>'
+    return
+  }
+  els.serverList.innerHTML = ''
+  for (const s of items) {
+    const row = document.createElement('div')
+    row.className = 'server-row'
+    const pick = document.createElement('button')
+    pick.type = 'button'
+    pick.className = 'pick'
+    pick.innerHTML = `<strong>${escapeHtml(s.name || s.Name || s.addr)}</strong><span class="addr">${escapeHtml(s.addr || s.Addr)}</span>`
+    pick.addEventListener('click', () => {
+      els.serverAddr.value = s.addr || s.Addr || ''
+      els.serverName.value = s.name || s.Name || ''
+      log(`已选用入口 ${els.serverAddr.value}`)
+    })
+    const del = document.createElement('button')
+    del.type = 'button'
+    del.className = 'ghost'
+    del.textContent = '删除'
+    del.addEventListener('click', async () => {
+      const api = getAPI()
+      if (!api) return
+      await api.ForgetServer(s.addr || s.Addr)
+      await refreshServers()
+    })
+    row.append(pick, del)
+    els.serverList.append(row)
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+async function refreshServers() {
+  const api = getAPI()
+  if (!api?.Servers) return
+  try {
+    renderServers(await api.Servers())
+  } catch (e) {
+    log(`读取节点失败：${e}`, 'error')
+  }
+}
+
 async function connect() {
   const api = getAPI()
   if (!api) {
@@ -108,7 +231,14 @@ async function connect() {
   log(`正在连接：server=${serverAddr} generation=${generation}`)
   try {
     await api.Start(seedHex, generation, pskHex, serverAddr)
+    const name = els.serverName.value.trim()
+    if (name) await api.RememberServer(name, serverAddr)
     log('Start 调用成功。')
+    lastSent = 0
+    lastRecv = 0
+    lastTs = 0
+    samples.length = 0
+    await refreshServers()
   } catch (e) {
     log(`Start 调用失败：${e}`, 'error')
   } finally {
@@ -142,24 +272,13 @@ async function loadConfig(silent = false) {
     els.seedHex.value = cfg.seedHex ?? ''
     els.generation.value = cfg.generation ?? 0
     els.pskHex.value = cfg.pskHex ?? ''
+    renderServers(cfg.servers || [])
     if (!silent) log('配置已载入。')
   } catch (e) {
     log(`读取配置失败：${e}`, 'error')
   }
 }
 
-async function fillDefaultServer() {
-  const api = getAPI()
-  if (!api) return
-  try {
-    els.serverAddr.value = await api.SelectServerDefault()
-    log('已填入默认服务器地址。')
-  } catch (e) {
-    log(`获取默认服务器失败：${e}`, 'error')
-  }
-}
-
-// 显示/隐藏密钥输入框。
 document.querySelectorAll('[data-toggle]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const input = document.getElementById(btn.dataset.toggle)
@@ -172,10 +291,24 @@ document.querySelectorAll('[data-toggle]').forEach((btn) => {
 
 els.connectBtn.addEventListener('click', connect)
 els.disconnectBtn.addEventListener('click', disconnect)
-els.defaultServerBtn.addEventListener('click', fillDefaultServer)
-els.reloadConfigBtn.addEventListener('click', () => loadConfig(false))
+els.saveServerBtn.addEventListener('click', async () => {
+  const api = getAPI()
+  const addr = els.serverAddr.value.trim()
+  if (!api || !addr) {
+    log('先填写服务器地址再保存入口。', 'warn')
+    return
+  }
+  await api.RememberServer(els.serverName.value.trim() || addr, addr)
+  await refreshServers()
+  log(`已保存入口 ${addr}`)
+})
+els.trayBtn.addEventListener('click', async () => {
+  const api = getAPI()
+  if (!api?.HideToTray) return
+  log('窗口已隐藏，在托盘图标上单击可再打开。')
+  await api.HideToTray()
+})
 
-// 启动流程：优先载入已保存配置，然后默认服务器兜底，再刷新状态。
 ;(async function init() {
   const api = await waitForAPI()
   if (!api) {
@@ -184,15 +317,20 @@ els.reloadConfigBtn.addEventListener('click', () => loadConfig(false))
     return
   }
 
-  if (els.autoLoad.checked) {
-    await loadConfig(true)
-  }
+  await loadConfig(true)
   if (!els.serverAddr.value) {
-    await fillDefaultServer()
+    try {
+      els.serverAddr.value = await api.SelectServerDefault()
+    } catch {
+      /* keep empty */
+    }
   }
 
   await refreshStatus()
+  await refreshTraffic()
   setInterval(async () => {
-    if (els.autoStatus.checked) await refreshStatus()
-  }, 2000)
+    await refreshStatus()
+    await refreshTraffic()
+  }, 1000)
+  window.addEventListener('resize', drawSpark)
 })()

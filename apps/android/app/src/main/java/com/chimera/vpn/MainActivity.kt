@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -24,8 +26,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pskInput: TextInputEditText
     private lateinit var tunIpInput: TextInputEditText
     private lateinit var connectButton: MaterialButton
-    private lateinit var statusText: android.widget.TextView
-    private lateinit var logText: android.widget.TextView
+    private lateinit var saveNodeButton: MaterialButton
+    private lateinit var statusText: TextView
+    private lateinit var trafficText: TextView
+    private lateinit var logText: TextView
+    private lateinit var serverList: LinearLayout
 
     private var pendingConfig: ChimeraVpnService.VpnConfig? = null
 
@@ -50,9 +55,13 @@ class MainActivity : AppCompatActivity() {
         pskInput = findViewById(R.id.pskInput)
         tunIpInput = findViewById(R.id.tunIpInput)
         connectButton = findViewById(R.id.connectButton)
+        saveNodeButton = findViewById(R.id.saveNodeButton)
         statusText = findViewById(R.id.statusText)
+        trafficText = findViewById(R.id.trafficText)
         logText = findViewById(R.id.logText)
+        serverList = findViewById(R.id.serverList)
         restoreForm()
+        renderServers()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -67,6 +76,15 @@ class MainActivity : AppCompatActivity() {
                 connect()
             }
         }
+        saveNodeButton.setOnClickListener {
+            val addr = serverInput.text?.toString()?.trim().orEmpty()
+            if (addr.isEmpty()) {
+                Toast.makeText(this, R.string.toast_fill_all, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            ClientPrefs.saveServer(this, addr, addr)
+            renderServers()
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -78,6 +96,11 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     ChimeraVpnService.logLines.collect { lines ->
                         logText.text = lines.joinToString("\n")
+                    }
+                }
+                launch {
+                    ChimeraVpnService.traffic.collect { snap ->
+                        trafficText.text = "↑ ${ChimeraVpnService.formatBytes(snap.sent)}    ↓ ${ChimeraVpnService.formatBytes(snap.recv)}"
                     }
                 }
             }
@@ -113,7 +136,7 @@ class MainActivity : AppCompatActivity() {
             pskHex = psk,
             tunIp = tunIp
         )
-        saveForm(config)
+        ClientPrefs.save(this, config)
 
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) {
@@ -124,25 +147,46 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun prefs() = getSharedPreferences("chimera_client", MODE_PRIVATE)
-
     private fun restoreForm() {
-        val p = prefs()
-        serverInput.setText(p.getString(PREF_SERVER, ""))
-        seedInput.setText(p.getString(PREF_SEED, ""))
-        generationInput.setText(p.getString(PREF_GENERATION, "0"))
-        pskInput.setText(p.getString(PREF_PSK, ""))
-        tunIpInput.setText(p.getString(PREF_TUN_IP, "10.99.0.2"))
+        val config = ClientPrefs.load(this)
+        if (config != null) {
+            serverInput.setText(config.serverAddr)
+            seedInput.setText(config.seedHex)
+            generationInput.setText(config.generation.toString())
+            pskInput.setText(config.pskHex)
+            tunIpInput.setText(config.tunIp)
+            return
+        }
+        val p = getSharedPreferences(ClientPrefs.PREF, MODE_PRIVATE)
+        serverInput.setText(p.getString(ClientPrefs.SERVER, ""))
+        seedInput.setText(p.getString(ClientPrefs.SEED, ""))
+        generationInput.setText(p.getString(ClientPrefs.GENERATION, "0"))
+        pskInput.setText(p.getString(ClientPrefs.PSK, ""))
+        tunIpInput.setText(p.getString(ClientPrefs.TUN_IP, "10.99.0.2"))
     }
 
-    private fun saveForm(config: ChimeraVpnService.VpnConfig) {
-        prefs().edit()
-            .putString(PREF_SERVER, config.serverAddr)
-            .putString(PREF_SEED, config.seedHex)
-            .putString(PREF_GENERATION, config.generation.toString())
-            .putString(PREF_PSK, config.pskHex)
-            .putString(PREF_TUN_IP, config.tunIp)
-            .apply()
+    private fun renderServers() {
+        serverList.removeAllViews()
+        for ((name, addr) in ClientPrefs.servers(this)) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            val pick = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "$name\n$addr"
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener { serverInput.setText(addr) }
+            }
+            val del = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "删除"
+                setOnClickListener {
+                    ClientPrefs.removeServer(this@MainActivity, addr)
+                    renderServers()
+                }
+            }
+            row.addView(pick)
+            row.addView(del)
+            serverList.addView(row)
+        }
     }
 
     private fun renderStatus(status: String) {
@@ -152,13 +196,5 @@ class MainActivity : AppCompatActivity() {
         } else {
             getString(R.string.connect)
         }
-    }
-
-    companion object {
-        private const val PREF_SERVER = "server"
-        private const val PREF_SEED = "seed"
-        private const val PREF_GENERATION = "generation"
-        private const val PREF_PSK = "psk"
-        private const val PREF_TUN_IP = "tun_ip"
     }
 }

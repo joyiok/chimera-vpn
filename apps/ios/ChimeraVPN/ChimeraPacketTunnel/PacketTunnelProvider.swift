@@ -9,7 +9,7 @@ import Darwin
 /// - `serverAddr`: server address in host:port form
 /// - `seedHex`: seed for the Chimera protocol
 /// - `generation`: generation number for the Chimera protocol
-/// - `pskHex`: optional pre-shared key (empty string when unused)
+/// - `pskHex`: pre-shared key (64 hex chars; required by the UI)
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let log = OSLog(subsystem: "com.chimera.vpn.tunnel", category: "PacketTunnelProvider")
@@ -18,14 +18,37 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// packet is available, so it must never run on the main thread.
     private let writerQueue = DispatchQueue(label: "com.chimera.vpn.tunnel.writer", qos: .utility)
 
+    /// Handshake, IdleMillis watchdog, and session swap. Must not be the
+    /// writer queue: Receive blocks and would starve the timer.
+    private let controlQueue = DispatchQueue(label: "com.chimera.vpn.tunnel.control", qos: .utility)
+
+    private let handleLock = NSLock()
+
     /// Session handle returned by GoBind.start. -1 means "no session".
     private var handle: Int64 = -1
 
     /// Set to false by `stopTunnel` to terminate both loops.
     private var isRunning = false
 
+    private var reconnecting = false
+    private var session: SessionConfig?
+    private var localIP = ""
+    private var watchdogTimer: DispatchSourceTimer?
+
+    private struct SessionConfig {
+        let serverAddr: String
+        let seedHex: String
+        let pskHex: String
+        let generation: Int64
+        let fallbackIP: String
+    }
+
+    private static let linkLostMillis: Int64 = 90_000
+
     override func startTunnel(options: [String: NSObject]? = nil, completionHandler: @escaping (Error?) -> Void) {
         os_log(.info, log: log, "Chimera startTunnel called")
+        TunnelShare.resetSession()
+        TunnelShare.appendLog("startTunnel")
 
         guard let tunnelProtocol = protocolConfiguration as? NETunnelProviderProtocol,
               let providerConfiguration = tunnelProtocol.providerConfiguration else {
@@ -62,20 +85,30 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        var localIP = tunIP
-        do {
-            handle = try GoBind.shared.start(
-                seedHex: seedHex,
-                generation: generation,
-                pskHex: pskHex,
-                serverAddr: serverAddr
-            )
-            os_log(.info, log: log, "Go core started with handle %lld", handle)
+        let cfg = SessionConfig(
+            serverAddr: serverAddr,
+            seedHex: seedHex,
+            pskHex: pskHex,
+            generation: generation,
+            fallbackIP: tunIP
+        )
+        session = cfg
 
-            if let assignedIP = try? GoBind.shared.assignedIP(handle), !assignedIP.isEmpty {
+        do {
+            let newHandle = try GoBind.shared.start(
+                seedHex: cfg.seedHex,
+                generation: cfg.generation,
+                pskHex: cfg.pskHex,
+                serverAddr: cfg.serverAddr
+            )
+            setHandle(newHandle)
+            os_log(.info, log: log, "Go core started with handle %lld", newHandle)
+
+            if let assignedIP = try? GoBind.shared.assignedIP(newHandle), !assignedIP.isEmpty {
                 localIP = assignedIP
                 os_log(.info, log: log, "local TUN address %{public}@ (server assigned)", localIP)
             } else {
+                localIP = cfg.fallbackIP
                 os_log(.info, log: log, "local TUN address %{public}@ (manual)", localIP)
             }
         } catch {
@@ -84,15 +117,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        applyNetworkSettings(localIP: localIP, serverAddr: serverAddr) { [weak self] error in
+        applyNetworkSettings(localIP: localIP, serverAddr: cfg.serverAddr) { [weak self] error in
             guard let self = self else {
                 completionHandler(error)
                 return
             }
             if let error {
                 os_log(.error, log: self.log, "setTunnelNetworkSettings failed: %{public}@", error.localizedDescription)
-                try? GoBind.shared.stop(self.handle)
-                self.handle = -1
+                let h = self.currentHandle()
+                try? GoBind.shared.stop(h)
+                self.setHandle(-1)
                 completionHandler(error)
                 return
             }
@@ -102,22 +136,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // up before routes/DNS/MTU are applied.
             self.isRunning = true
             completionHandler(nil)
+            TunnelShare.appendLog("connected localIP=\(self.localIP)")
 
             self.startReaderLoop()
             self.startWriterLoop()
+            self.startWatchdog()
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         os_log(.info, log: log, "Chimera stopTunnel called with reason %{public}ld", reason.rawValue)
+        TunnelShare.appendLog("stopTunnel reason=\(reason.rawValue)")
         isRunning = false
+        stopWatchdog()
 
-        let currentHandle = handle
-        handle = -1
-        if currentHandle != -1 {
+        let h = currentHandle()
+        setHandle(-1)
+        if h != -1 {
             do {
-                try GoBind.shared.stop(currentHandle)
-                os_log(.info, log: log, "Go core stopped for handle %lld", currentHandle)
+                try GoBind.shared.stop(h)
+                os_log(.info, log: log, "Go core stopped for handle %lld", h)
             } catch {
                 os_log(.error, log: log, "GoBind.stop failed: %{public}@", error.localizedDescription)
             }
@@ -142,6 +180,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         settings.ipv4Settings = ipv4Settings
 
+        let ipv6Settings = NEIPv6Settings(addresses: ["fd99::2"], networkPrefixLengths: [NSNumber(value: 64)])
+        ipv6Settings.includedRoutes = [NEIPv6Route.default()]
+        settings.ipv6Settings = ipv6Settings
+
         let dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "8.8.8.8"])
         dnsSettings.matchDomains = [""]
         settings.dnsSettings = dnsSettings
@@ -149,6 +191,94 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         settings.mtu = NSNumber(value: 1400)
 
         setTunnelNetworkSettings(settings, completionHandler: completion)
+    }
+
+    // MARK: - Reconnect
+
+    private func startWatchdog() {
+        stopWatchdog()
+        let timer = DispatchSource.makeTimerSource(queue: controlQueue)
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            guard self.isRunning else { return }
+            let h = self.currentHandle()
+            guard h != -1 else { return }
+            let idle = (try? GoBind.shared.idleMillis(h)) ?? 0
+            if idle >= Self.linkLostMillis {
+                self.reconnectGo(reason: "inbound silence \(idle)ms")
+            }
+        }
+        timer.resume()
+        watchdogTimer = timer
+    }
+
+    private func stopWatchdog() {
+        watchdogTimer?.cancel()
+        watchdogTimer = nil
+    }
+
+    private func reconnectGo(reason: String) {
+        controlQueue.async { [weak self] in
+            self?.reconnectLocked(reason: reason)
+        }
+    }
+
+    private func reconnectLocked(reason: String) {
+        guard isRunning, !reconnecting, let cfg = session else { return }
+        reconnecting = true
+        defer { reconnecting = false }
+
+        os_log(.info, log: log, "reconnecting: %{public}@", reason)
+        TunnelShare.appendLog("reconnecting: \(reason)")
+
+        let newHandle: Int64
+        do {
+            newHandle = try GoBind.shared.start(
+                seedHex: cfg.seedHex,
+                generation: cfg.generation,
+                pskHex: cfg.pskHex,
+                serverAddr: cfg.serverAddr
+            )
+        } catch {
+            os_log(.error, log: log, "reconnect Start failed: %{public}@", error.localizedDescription)
+            return
+        }
+
+        let newIP: String
+        if let assigned = try? GoBind.shared.assignedIP(newHandle), !assigned.isEmpty {
+            newIP = assigned
+        } else {
+            newIP = cfg.fallbackIP
+        }
+
+        if newIP != localIP {
+            let sem = DispatchSemaphore(value: 0)
+            var applyErr: Error?
+            // Completion may run on the caller queue; never wait on that
+            // same queue or setTunnelNetworkSettings can deadlock.
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.applyNetworkSettings(localIP: newIP, serverAddr: cfg.serverAddr) { err in
+                    applyErr = err
+                    sem.signal()
+                }
+            }
+            sem.wait()
+            if let applyErr {
+                os_log(.error, log: log, "reconnect settings failed: %{public}@", applyErr.localizedDescription)
+                try? GoBind.shared.stop(newHandle)
+                return
+            }
+            localIP = newIP
+            os_log(.info, log: log, "TUN address now %{public}@", newIP)
+        }
+
+        let old = currentHandle()
+        setHandle(newHandle)
+        if old != -1, old != newHandle {
+            try? GoBind.shared.stop(old)
+        }
+        os_log(.info, log: log, "reconnected handle %lld", newHandle)
     }
 
     // MARK: - Data path loops
@@ -162,9 +292,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let self = self else { return }
             guard self.isRunning else { return }
 
+            let h = self.currentHandle()
+            guard h != -1 else {
+                self.startReaderLoop()
+                return
+            }
             for packet in packets {
                 do {
-                    try GoBind.shared.send(self.handle, packet: packet.data)
+                    try GoBind.shared.send(h, packet: packet.data)
+                    TunnelShare.addBytes(sent: packet.data.count, recv: 0)
                 } catch {
                     os_log(.error, log: self.log, "GoBind.send failed: %{public}@", error.localizedDescription)
                 }
@@ -181,8 +317,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let self = self else { return }
 
             while self.isRunning {
+                let h = self.currentHandle()
+                if h == -1 {
+                    Thread.sleep(forTimeInterval: 0.05)
+                    continue
+                }
                 do {
-                    let data = try GoBind.shared.receive(self.handle)
+                    let data = try GoBind.shared.receive(h)
                     guard self.isRunning else { break }
                     if data.isEmpty { continue }
 
@@ -193,12 +334,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     self.packetFlow.writePacketObjects([
                         NEPacket(data: data, protocolFamily: family)
                     ])
+                    TunnelShare.addBytes(sent: 0, recv: data.count)
                 } catch {
                     if self.isRunning {
                         os_log(.error, log: self.log, "GoBind.receive failed: %{public}@", error.localizedDescription)
-                        // Brief pause to avoid a busy-loop while the Go core
-                        // is unavailable or in a transient error state.
-                        Thread.sleep(forTimeInterval: 0.05)
+                        self.reconnectGo(reason: "receive: \(error.localizedDescription)")
+                        Thread.sleep(forTimeInterval: 0.2)
                     }
                 }
             }
@@ -208,6 +349,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     // MARK: - Helpers
+
+    private func currentHandle() -> Int64 {
+        handleLock.lock()
+        defer { handleLock.unlock() }
+        return handle
+    }
+
+    private func setHandle(_ value: Int64) {
+        handleLock.lock()
+        handle = value
+        handleLock.unlock()
+    }
 
     static func hostOf(_ serverAddr: String) -> String? {
         let trimmed = serverAddr.trimmingCharacters(in: .whitespacesAndNewlines)

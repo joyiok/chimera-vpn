@@ -4,13 +4,12 @@
   --bg-input: #0b0f14;
   --border: #2d333b;
   --text: #e6edf3;
-  --text-muted: #8b949e;
+  --text-muted: #9aa4b0;
   --accent: #1f6feb;
   --accent-hover: #388bfd;
   --green: #2ea043;
   --yellow: #d29922;
   --red: #f85149;
-  --gray: #6e7681;
   --radius: 10px;
 }
 
@@ -31,16 +30,16 @@ body {
 }
 
 #app {
-  max-width: 980px;
+  max-width: 1040px;
   margin: 0 auto;
   padding: 24px 20px 32px;
 }
 
-/* 顶栏 */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 8px 0 20px;
 }
 
@@ -65,7 +64,8 @@ body {
 .brand h1 {
   margin: 0;
   font-size: 18px;
-  letter-spacing: 2px;
+  letter-spacing: 0.08em;
+  text-wrap: balance;
 }
 
 .brand p {
@@ -74,7 +74,12 @@ body {
   font-size: 12px;
 }
 
-/* 状态徽章 */
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .badge {
   min-width: 96px;
   text-align: center;
@@ -104,15 +109,49 @@ body {
   background: rgba(248, 81, 73, 0.10);
 }
 
-.badge.disconnected {
-  color: var(--text-muted);
+.stats {
+  display: grid;
+  grid-template-columns: 160px 160px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
-/* 卡片布局 */
+.stats-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.stats strong {
+  font-size: 16px;
+}
+
+.rate {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+#spark {
+  width: 100%;
+  height: 72px;
+}
+
 main {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: 1.15fr 0.85fr;
   gap: 16px;
+}
+
+.logs-card {
+  grid-column: 1 / -1;
 }
 
 .card {
@@ -126,14 +165,9 @@ main {
   margin: 0 0 14px;
   font-size: 14px;
   color: var(--text-muted);
-  letter-spacing: 1px;
+  letter-spacing: 0.06em;
 }
 
-.settings {
-  grid-column: 1 / -1;
-}
-
-/* 表单 */
 .field {
   display: block;
   margin-bottom: 12px;
@@ -159,6 +193,10 @@ input[type="number"] {
   font-size: 14px;
 }
 
+input::placeholder {
+  color: #7d8794;
+}
+
 input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.2);
@@ -173,23 +211,9 @@ input:focus {
   flex: 1;
 }
 
-.secret-row button {
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.secret-row button:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-/* 按钮 */
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 16px;
 }
@@ -213,6 +237,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -227,9 +256,39 @@ button.ghost {
   background: transparent;
 }
 
-/* 日志 */
+.server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.server-row button.pick {
+  flex: 1;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.server-row .addr {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .logs {
-  height: 330px;
+  height: 220px;
   overflow-y: auto;
   padding: 10px;
   border: 1px solid var(--border);
@@ -249,10 +308,6 @@ button.ghost {
   color: var(--text-muted);
 }
 
-.log.info {
-  color: var(--text);
-}
-
 .log.warn {
   color: var(--yellow);
 }
@@ -261,27 +316,9 @@ button.ghost {
   color: var(--red);
 }
 
-/* 设置 */
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: var(--text);
-  cursor: pointer;
-}
-
 .muted {
   color: var(--text-muted);
   font-size: 12px;
-}
-
-code {
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: #79c0ff;
 }
 
 footer {
@@ -289,4 +326,17 @@ footer {
   text-align: center;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+@media (max-width: 840px) {
+  main,
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }

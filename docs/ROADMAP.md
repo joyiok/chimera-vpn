@@ -4,7 +4,7 @@
 
 ## 1. ~~Windows 默认路由接管~~（已完成，待真机验收）
 
-Linux CLI（`cmd/chimerac -take-route`）使用同一套半默认路由语义，另加 IPv6 `::/1`+`8000::/1` 尽力堵泄漏。待远程真机验收。
+Linux CLI（`cmd/chimerac -take-route`）使用同一套半默认路由语义，另加 IPv6 `::/1`+`8000::/1` 尽力堵泄漏；接管成功后尽力改 systemd-resolved。待远程真机验收。
 
 **实现**：`apps/windows/internal/bridge/route.go`（纯逻辑，跨平台可测）+
 `route_windows.go`（GetAdaptersAddresses + netsh）。
@@ -40,13 +40,14 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 1. `apps/android/build-android-core.sh` 生成 AAR。
 2. Android Studio 打开工程，连真机。
 3. 验证 `GoBind.start` -> `socketFD` + `VpnService.protect` -> `assignedIP` -> TUN。
-4. 已知需检查：前台服务类型在 Android 14+ 的厂商适配；DNS 是否真正生效。
+4. 入站静默 90s 或 Receive 失败会重连 Go 核心（新会话先 `protect`，尽量不拆 TUN）。
+5. 已知需检查：前台服务类型在 Android 14+ 的厂商适配；IPv6 `::/0` 与 DNS 是否真正生效。
 
 **iOS**：
 1. macOS 上 `build-ios-core.sh` 生成 XCFramework 并链入两个 target。
 2. 配置 App Group + NetworkExtension entitlements。
 3. 验证 `PacketTunnelProvider` 中 `GoBind.assignedIP` 阻塞 10s 内返回；
-   IPv4 服务器地址已加 `/32` excludedRoutes。
+   IPv4 服务器地址已加 `/32` excludedRoutes；IdleMillis 看门狗会重连 Go 核心。
 
 ## 5. ~~探测诱饵（anti-probe decoy）~~（已完成）
 

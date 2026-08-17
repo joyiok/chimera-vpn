@@ -67,11 +67,34 @@ object GoBind {
     fun socketFD(handle: Long): Int {
         val result = invokeStatic("socketFD", handle)
         return when (result) {
-            is Int -> result
+            is Int -> result.toInt()
             is Long -> result.toInt()
             is Number -> result.toInt()
             null -> -1
             else -> throw IllegalStateException("GoBind.socketFD 返回类型异常: ${result.javaClass.name}")
+        }
+    }
+
+    /** Inbound silence in milliseconds. Missing on older AARs → 0. */
+    fun idleMillis(handle: Long): Long = longMethod("idleMillis", handle)
+
+    /** TUN payload bytes. Missing on older AARs → 0. */
+    fun bytesSent(handle: Long): Long = longMethod("bytesSent", handle)
+
+    fun bytesRecv(handle: Long): Long = longMethod("bytesRecv", handle)
+
+    private fun longMethod(name: String, handle: Long): Long {
+        if (handle < 0L) return 0L
+        return try {
+            val result = invokeStatic(name, handle)
+            when (result) {
+                is Long -> result
+                is Int -> result.toLong()
+                is Number -> result.toLong()
+                else -> 0L
+            }
+        } catch (_: Throwable) {
+            0L
         }
     }
 

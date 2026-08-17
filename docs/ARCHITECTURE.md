@@ -104,14 +104,19 @@ func AssignedIP(handle int64) (string, error)   // 阻塞最多 10s
 func Stop(handle int64) error
 func Send(handle int64, packet []byte) error
 func Receive(handle int64) ([]byte, error)      // 阻塞
+func SocketFD(handle int64) (int, error)        // Android protect(fd)
+func IdleMillis(handle int64) (int64, error)    // 入站静默；看门狗用
+func BytesSent(handle int64) (int64, error)     // TUN 上行 IP 字节
+func BytesRecv(handle int64) (int64, error)     // TUN 下行 IP 字节
 ```
 
 平台时序（Android/iOS 已按此实现）：
 
 ```text
-Start() -> AssignedIP() -> 用分配地址创建 TUN -> 启动两条泵
+Start() -> SocketFD()+protect [Android] -> AssignedIP() -> 用分配地址创建 TUN -> 启动两条泵
 泵1: TUN.read -> Send(handle, pkt)
 泵2: Receive(handle) -> TUN.write(pkt)
+看门狗: IdleMillis >= 90000 → 新 Start（Android 再 protect）→ Stop 旧 handle；TUN 尽量不拆
 ```
 
 ## 会话状态机

@@ -82,7 +82,7 @@ sudo ./dist/chimerac -config client.json -take-route
 ```
 
 `-check` 对 `-no-tun` 服务端得到 `probe=echo`，对真实 TUN 服务端得到 `probe=icmp-reply`。
-`-take-route` 安装 `0.0.0.0/1` + `128.0.0.0/1` 经 TUN，服务器 IPv4 `/32` 走 `ip route get` 选出的物理网卡；回环地址拒绝接管。IPv6 半默认路由尽力安装，防 IPv6 泄漏。入站静默超过 `-lost-after`（默认 90s）自动重握手；自己发出的 keepalive 不再被当成对端还活着。
+`-take-route` 安装 `0.0.0.0/1` + `128.0.0.0/1` 经 TUN，服务器 IPv4 `/32` 走 `ip route get` 选出的物理网卡；回环地址拒绝接管。IPv6 半默认路由尽力安装，防 IPv6 泄漏。接管成功后尽力执行 `resolvectl dns <tun> 1.1.1.1 8.8.8.8` 与 `domain ~.`，退出时 `resolvectl revert`。入站静默超过 `-lost-after`（默认 90s）自动重握手；自己发出的 keepalive 不再被当成对端还活着。
 
 配对配置：`go run ./cmd/chimera-init -dir ./local -server host:4789`。
 
@@ -165,5 +165,6 @@ App Group 与 NetworkExtension entitlements，两个 target 的 bundle id 见 pb
 go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind
 ```
 
-会生成 `Start / AssignedIP / Stop / Send / Receive / SocketFD` 的 Java 签名。
+会生成 `Start / AssignedIP / Stop / Send / Receive / SocketFD / IdleMillis / BytesSent / BytesRecv` 的 Java 签名。
 Android 必须在 `establish()` 之前对 `SocketFD` 调用 `VpnService.protect`。
+`IdleMillis` 是入站静默毫秒数，平台看门狗用来判定掉线重连。

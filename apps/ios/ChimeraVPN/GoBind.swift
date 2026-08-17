@@ -76,6 +76,12 @@ public final class GoBind {
         try BindReceive(handle)
     }
 
+    /// Calls Go core `IdleMillis(handle)` (inbound silence). Rebuild
+    /// ChimeraBind.xcframework after adding this export.
+    public func idleMillis(_ handle: Int64) throws -> Int64 {
+        try BindIdleMillis(handle)
+    }
+
     #else
 
     public func start(seedHex: String, generation: Int64, pskHex: String, serverAddr: String) throws -> Int64 {
@@ -98,6 +104,10 @@ public final class GoBind {
     }
 
     public func receive(_ handle: Int64) throws -> Data {
+        throw GoBindError.frameworkUnavailable
+    }
+
+    public func idleMillis(_ handle: Int64) throws -> Int64 {
         throw GoBindError.frameworkUnavailable
     }
 
