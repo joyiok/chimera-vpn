@@ -91,8 +91,8 @@ type ServerTunnel struct {
 	ackDue uint64
 	ackMu  sync.Mutex
 
-	// lastActive is touched on every send/decode; the mux timerLoop
-	// reaps sessions idle past the configured timeout.
+	// lastActive is touched on authenticated inbound only; the mux
+	// timerLoop reaps sessions idle past the configured timeout.
 	lastActive atomic.Int64 // unix nanos
 
 	// limiter caps this client's inbound datagram rate (nil = unlimited).
@@ -119,7 +119,8 @@ func (t *ServerTunnel) SendPacket(packet []byte) error {
 	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
 		return err
 	}
-	t.touch()
+	// Outbound data must not postpone idle reaping: only authenticated
+	// inbound (including the peer's keepalive) touches lastActive.
 	t.maybeSendLossControl()
 	return nil
 }

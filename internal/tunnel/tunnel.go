@@ -128,11 +128,12 @@ type PacketTunnel struct {
 	ackDue uint64
 	ackMu  sync.Mutex
 
-	// keepalive state: lastActive is touched on every send/receive; the
-	// pump (if enabled) emits ControlKeepalive when the link goes quiet.
-	lastActive atomic.Int64 // unix nanos
-	kaCancel   context.CancelFunc
-	kaDone     chan struct{}
+	// lastRecv is the last authenticated inbound frame (peer liveness).
+	// lastSend is the last outbound frame (NAT keepalive pump).
+	lastRecv atomic.Int64 // unix nanos
+	lastSend atomic.Int64 // unix nanos
+	kaCancel context.CancelFunc
+	kaDone   chan struct{}
 
 	// jitterMax smears send timing; 0 disables (see applyJitter).
 	jitterMax time.Duration
@@ -148,7 +149,9 @@ func NewPacketTunnel(conn net.PacketConn, peer net.Addr, sess *compiler.PacketSe
 		data:   make(chan []byte, 256),
 		kaDone: make(chan struct{}),
 	}
-	t.lastActive.Store(time.Now().UnixNano())
+	now := time.Now().UnixNano()
+	t.lastRecv.Store(now)
+	t.lastSend.Store(now)
 	return t
 }
 
@@ -201,8 +204,7 @@ func (t *PacketTunnel) SetKeepalive(interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				idle := time.Since(time.Unix(0, t.lastActive.Load()))
-				if idle < interval {
+				if t.quietFor() < interval {
 					continue
 				}
 				_ = t.sendControlRaw([]byte{ControlKeepalive})
@@ -211,13 +213,24 @@ func (t *PacketTunnel) SetKeepalive(interval time.Duration) {
 	}()
 }
 
-func (t *PacketTunnel) touch() { t.lastActive.Store(time.Now().UnixNano()) }
+func (t *PacketTunnel) touchRecv() { t.lastRecv.Store(time.Now().UnixNano()) }
 
-// IdleFor reports how long the link has been quiet (no authenticated frame
-// either way). Client watchdogs treat multiples of the keepalive interval
-// as link loss.
+func (t *PacketTunnel) touchSend() { t.lastSend.Store(time.Now().UnixNano()) }
+
+func (t *PacketTunnel) quietFor() time.Duration {
+	r := t.lastRecv.Load()
+	s := t.lastSend.Load()
+	if s > r {
+		r = s
+	}
+	return time.Since(time.Unix(0, r))
+}
+
+// IdleFor is inbound silence: time since the last authenticated frame
+// from the peer. Own keepalives and data sends do not reset it, so a
+// client watchdog can detect a dead server (Windows GUI and chimerac).
 func (t *PacketTunnel) IdleFor() time.Duration {
-	return time.Since(time.Unix(0, t.lastActive.Load()))
+	return time.Since(time.Unix(0, t.lastRecv.Load()))
 }
 
 // SendPacket encrypts and transmits one IP packet.
@@ -240,7 +253,7 @@ func (t *PacketTunnel) sendPayload(payload []byte) error {
 	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
 		return err
 	}
-	t.touch()
+	t.touchSend()
 	t.maybeSendLossControl()
 	return nil
 }
@@ -277,7 +290,11 @@ func (t *PacketTunnel) sendControlRaw(payload []byte) error {
 	if err != nil {
 		return err
 	}
-	return writeDatagram(t.conn, t.peer, frame, t.jitterMax)
+	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
+		return err
+	}
+	t.touchSend()
+	return nil
 }
 
 // handleLossControl applies a decoded control payload, returning true when
@@ -321,7 +338,7 @@ func (t *PacketTunnel) decodeLocked(buf []byte) (pkt []byte, isCtrl bool, err er
 	if err != nil {
 		return nil, false, err
 	}
-	t.touch()
+	t.touchRecv()
 	pkt = append([]byte(nil), msg.Payload...)
 	if t.handleLossControl(pkt) {
 		return nil, true, nil
@@ -349,6 +366,10 @@ func (t *PacketTunnel) ReceivePacket() ([]byte, error) {
 	case pkt := <-t.data:
 		return pkt, nil
 	default:
+	}
+	// Handshake / WaitControl leave short read deadlines on the socket.
+	if err := t.conn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, err
 	}
 	buf := make([]byte, maxDatagram)
 	for {
@@ -609,6 +630,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 	if peer == nil {
 		return nil, errors.New("handshake completed without a peer address")
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	return peer, nil
 }
 

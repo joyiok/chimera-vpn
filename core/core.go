@@ -265,9 +265,10 @@ func (c *Client) Generation() uint64 {
 	return c.gen
 }
 
-// IdleFor reports how long the link has been quiet. A healthy link with
-// keepalives never exceeds roughly one interval; multiples of it indicate
-// loss. Returns 0 when not started.
+// IdleFor is inbound silence (time since the last authenticated frame from
+// the peer). Own keepalives do not reset it. A healthy link stays well
+// below one server keepalive interval; several multiples indicate loss.
+// Returns 0 when not started.
 func (c *Client) IdleFor() time.Duration {
 	c.mu.Lock()
 	t := c.tun
