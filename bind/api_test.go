@@ -24,6 +24,9 @@ func TestExportedAPI(t *testing.T) {
 		"Send":       false,
 		"Receive":    false,
 		"SocketFD":   false,
+		"IdleMillis": false,
+		"BytesSent":  false,
+		"BytesRecv":  false,
 	}
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
@@ -56,5 +59,14 @@ func TestUnknownHandleErrors(t *testing.T) {
 	}
 	if _, err := SocketFD(0); err == nil {
 		t.Fatal("SocketFD(0)")
+	}
+	if _, err := IdleMillis(0); err == nil {
+		t.Fatal("IdleMillis(0)")
+	}
+	if _, err := BytesSent(0); err == nil {
+		t.Fatal("BytesSent(0)")
+	}
+	if _, err := BytesRecv(0); err == nil {
+		t.Fatal("BytesRecv(0)")
 	}
 }

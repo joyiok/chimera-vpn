@@ -185,6 +185,9 @@ jobs:
           printf '%s\n' "$out" | grep -F 'public static native void send('
           printf '%s\n' "$out" | grep -F 'public static native byte[] receive('
           printf '%s\n' "$out" | grep -F 'public static native void stop('
+          printf '%s\n' "$out" | grep -F 'public static native long idleMillis('
+          printf '%s\n' "$out" | grep -F 'public static native long bytesSent('
+          printf '%s\n' "$out" | grep -F 'public static native long bytesRecv('
 
   # gomobile + Android SDK/NDK. Ubuntu is enough; this does not need macos.
   android-apk:

@@ -279,6 +279,17 @@ func (c *Client) IdleFor() time.Duration {
 	return t.IdleFor()
 }
 
+// Bytes is TUN payload volume since Start (IP packets only).
+func (c *Client) Bytes() (sent, recv uint64) {
+	c.mu.Lock()
+	t := c.tun
+	c.mu.Unlock()
+	if t == nil {
+		return 0, 0
+	}
+	return t.Bytes()
+}
+
 // Server multiplexes many generated-protocol clients over one UDP socket.
 type Server struct {
 	cfg Config

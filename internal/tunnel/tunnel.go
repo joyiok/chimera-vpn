@@ -137,6 +137,9 @@ type PacketTunnel struct {
 
 	// jitterMax smears send timing; 0 disables (see applyJitter).
 	jitterMax time.Duration
+
+	bytesSent atomic.Uint64
+	bytesRecv atomic.Uint64
 }
 
 // NewPacketTunnel wraps an established packet session.
@@ -233,9 +236,18 @@ func (t *PacketTunnel) IdleFor() time.Duration {
 	return time.Since(time.Unix(0, t.lastRecv.Load()))
 }
 
+// Bytes is TUN payload volume (IP packets), not ciphertext or keepalives.
+func (t *PacketTunnel) Bytes() (sent, recv uint64) {
+	return t.bytesSent.Load(), t.bytesRecv.Load()
+}
+
 // SendPacket encrypts and transmits one IP packet.
 func (t *PacketTunnel) SendPacket(packet []byte) error {
-	return t.sendPayload(packet)
+	if err := t.sendPayload(packet); err != nil {
+		return err
+	}
+	t.bytesSent.Add(uint64(len(packet)))
+	return nil
 }
 
 // SendControl encrypts a control payload (e.g. the assigned TUN address).
@@ -364,6 +376,7 @@ func (t *PacketTunnel) noteDecoded() bool {
 func (t *PacketTunnel) ReceivePacket() ([]byte, error) {
 	select {
 	case pkt := <-t.data:
+		t.bytesRecv.Add(uint64(len(pkt)))
 		return pkt, nil
 	default:
 	}
@@ -410,6 +423,7 @@ func (t *PacketTunnel) ReceivePacket() ([]byte, error) {
 		if ackErr == nil && due {
 			writeDatagramAsync(t.conn, t.peer, frame, t.jitterMax)
 		}
+		t.bytesRecv.Add(uint64(len(pkt)))
 		return pkt, nil
 	}
 }

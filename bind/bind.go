@@ -8,7 +8,7 @@
 //
 // gomobile bind -target=ios,iossimulator,macos -o ChimeraBind.xcframework chimera/bind
 //
-// The API is intentionally tiny: Start/AssignedIP/Stop/Send/Receive/SocketFD.
+// The API is intentionally tiny: Start/AssignedIP/Stop/Send/Receive/SocketFD/IdleMillis/BytesSent/BytesRecv.
 // Mobile VpnService and NEPacketTunnelProvider shells poll Receive on a
 // worker thread and push outbound IP packets through Send. Android must
 // call SocketFD after Start and VpnService.protect(fd) before establish().
@@ -35,12 +35,13 @@ func Start(seedHex string, generation int64, pskHex string, serverAddr string) (
 		return 0, fmt.Errorf("generation must be >= 0")
 	}
 	c, err := core.NewClient(core.Config{
-		SeedHex:          seedHex,
-		Generation:       uint64(generation),
-		GenerationWindow: 2,
-		JitterMax:        20 * time.Millisecond,
-		PSKHex:           pskHex,
-		ServerAddr:       serverAddr,
+		SeedHex:           seedHex,
+		Generation:        uint64(generation),
+		GenerationWindow:  2,
+		JitterMax:         20 * time.Millisecond,
+		KeepaliveInterval: 25 * time.Second,
+		PSKHex:            pskHex,
+		ServerAddr:        serverAddr,
 	})
 	if err != nil {
 		return 0, err
@@ -115,4 +116,40 @@ func SocketFD(handle int64) (int, error) {
 		return -1, fmt.Errorf("unknown handle %d", handle)
 	}
 	return c.UDPFileDescriptor()
+}
+
+// IdleMillis is inbound silence in milliseconds (see core.Client.IdleFor).
+// Platform watchdogs treat several keepalive intervals as link loss.
+func IdleMillis(handle int64) (int64, error) {
+	mu.Lock()
+	c := clients[handle]
+	mu.Unlock()
+	if c == nil {
+		return 0, fmt.Errorf("unknown handle %d", handle)
+	}
+	return c.IdleFor().Milliseconds(), nil
+}
+
+// BytesSent is TUN payload bytes this handle has sent.
+func BytesSent(handle int64) (int64, error) {
+	mu.Lock()
+	c := clients[handle]
+	mu.Unlock()
+	if c == nil {
+		return 0, fmt.Errorf("unknown handle %d", handle)
+	}
+	sent, _ := c.Bytes()
+	return int64(sent), nil
+}
+
+// BytesRecv is TUN payload bytes this handle has received.
+func BytesRecv(handle int64) (int64, error) {
+	mu.Lock()
+	c := clients[handle]
+	mu.Unlock()
+	if c == nil {
+		return 0, fmt.Errorf("unknown handle %d", handle)
+	}
+	_, recv := c.Bytes()
+	return int64(recv), nil
 }
