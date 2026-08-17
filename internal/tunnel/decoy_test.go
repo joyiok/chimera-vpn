@@ -10,6 +10,17 @@ import (
 	"chimera/internal/genome"
 )
 
+func TestDecoyGenerationMissesClientWindow(t *testing.T) {
+	for gen := uint64(0); gen < 16; gen++ {
+		d := DecoyGeneration(gen)
+		for w := uint64(0); w <= 2; w++ {
+			if d == gen+w {
+				t.Fatalf("decoy generation %d collides with live window gen+%d=%d", d, w, gen+w)
+			}
+		}
+	}
+}
+
 func TestAllowDecoySize(t *testing.T) {
 	if allowDecoySize(10, 40) {
 		t.Fatal("3x amplification must be rejected")
@@ -30,12 +41,13 @@ func TestDecoyRepliesToClientFirstProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wire := compiler.WrapHandshakeDatagram(dcp.Genome, frame)
 	probe := make([]byte, 512)
 	for i := range probe {
 		probe[i] = 0x41
 	}
-	if !allowDecoySize(len(probe), len(frame)) {
-		t.Fatalf("decoy frame %d bytes too large for 512-byte probe; pick another seed", len(frame))
+	if !allowDecoySize(len(probe), len(wire)) {
+		t.Fatalf("decoy frame %d bytes too large for 512-byte probe; pick another seed", len(wire))
 	}
 
 	serverConn, err := net.ListenPacket("udp", "127.0.0.1:0")

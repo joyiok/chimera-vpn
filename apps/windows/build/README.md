@@ -19,6 +19,9 @@ build\dev.bat with_transport
 
 输出文件位于 `build\bin\ChimeraClient.exe`（由 Wails CLI 生成）。
 
+GitHub Actions（`.github/workflows/ci.yml` job `windows-wails`）在 `windows-latest`
+上执行与 `build.bat with_transport` 等价的构建，并上传 exe + `wintun.dll`。
+
 ## Windows Defender / 代码签名（生产注意事项）
 
 1. **SmartScreen 提示**：未签名的本地构建 exe 首次运行时可能触发

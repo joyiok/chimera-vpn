@@ -6,7 +6,6 @@ package tunnel
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -134,6 +133,9 @@ type PacketTunnel struct {
 	lastActive atomic.Int64 // unix nanos
 	kaCancel   context.CancelFunc
 	kaDone     chan struct{}
+
+	// jitterMax smears send timing; 0 disables (see applyJitter).
+	jitterMax time.Duration
 }
 
 // NewPacketTunnel wraps an established packet session.
@@ -148,6 +150,15 @@ func NewPacketTunnel(conn net.PacketConn, peer net.Addr, sess *compiler.PacketSe
 	}
 	t.lastActive.Store(time.Now().UnixNano())
 	return t
+}
+
+// SetJitter enables uniform send-side timing smear in [0, max].
+// max <= 0 disables jitter. Call before packet pumps start.
+func (t *PacketTunnel) SetJitter(max time.Duration) {
+	if max < 0 {
+		max = 0
+	}
+	t.jitterMax = max
 }
 
 // SetShapeBuckets pads encoded datagrams to the next length rung.
@@ -222,17 +233,11 @@ func (t *PacketTunnel) SendControl(payload []byte) error {
 func (t *PacketTunnel) sendPayload(payload []byte) error {
 	t.sessMu.Lock()
 	frame, err := t.sess.Encode(payload)
-	if err != nil {
-		t.sessMu.Unlock()
-		return err
-	}
-	if len(frame) > maxDatagram {
-		t.sessMu.Unlock()
-		return fmt.Errorf("encrypted frame too large: %d", len(frame))
-	}
-	_, err = t.conn.WriteTo(frame, t.peer)
 	t.sessMu.Unlock()
 	if err != nil {
+		return err
+	}
+	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
 		return err
 	}
 	t.touch()
@@ -255,10 +260,7 @@ func (t *PacketTunnel) maybeSendLossControl() {
 	if err != nil {
 		return // best effort; the next send retries
 	}
-	if len(frame) > maxDatagram {
-		return
-	}
-	if _, err := t.conn.WriteTo(frame, t.peer); err != nil {
+	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
 		return
 	}
 	// Optimistically advance our view of the peer's position so we do not
@@ -275,11 +277,7 @@ func (t *PacketTunnel) sendControlRaw(payload []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(frame) > maxDatagram {
-		return fmt.Errorf("encrypted frame too large: %d", len(frame))
-	}
-	_, err = t.conn.WriteTo(frame, t.peer)
-	return err
+	return writeDatagram(t.conn, t.peer, frame, t.jitterMax)
 }
 
 // handleLossControl applies a decoded control payload, returning true when
@@ -381,20 +379,15 @@ func (t *PacketTunnel) ReceivePacket() ([]byte, error) {
 			continue
 		}
 		due := t.noteDecoded()
+		var frame []byte
 		var ackErr error
 		if due {
-			var frame []byte
 			base, _ := t.sess.AckState()
 			frame, ackErr = t.sess.Encode(encodeAckPayload(base))
-			t.sessMu.Unlock()
-			if ackErr == nil && len(frame) <= maxDatagram {
-				_, ackErr = t.conn.WriteTo(frame, t.peer)
-			}
-			if ackErr != nil {
-				continue // best effort; the next due frame retries
-			}
-		} else {
-			t.sessMu.Unlock()
+		}
+		t.sessMu.Unlock()
+		if ackErr == nil && due {
+			writeDatagramAsync(t.conn, t.peer, frame, t.jitterMax)
 		}
 		return pkt, nil
 	}
@@ -455,8 +448,8 @@ func (t *PacketTunnel) WaitControl(ctx context.Context) ([]byte, error) {
 			frame, ackErr = t.sess.Encode(encodeAckPayload(base))
 		}
 		t.sessMu.Unlock()
-		if ackErr == nil && due && len(frame) <= maxDatagram {
-			_, _ = t.conn.WriteTo(frame, t.peer) // best effort
+		if ackErr == nil && due {
+			writeDatagramAsync(t.conn, t.peer, frame, t.jitterMax)
 		}
 		select {
 		case t.data <- pkt:
@@ -485,7 +478,12 @@ func (t *PacketTunnel) Close() error {
 // ClientHandshake runs the generated datagram handshake as a client.
 // conn is a bound local UDP socket and peer is the server address.
 func ClientHandshake(conn net.PacketConn, peer net.Addr, h *compiler.Handshake) (*compiler.PacketSession, error) {
-	if _, err := runHandshake(h, conn, peer, true); err != nil {
+	return ClientHandshakeWithJitter(conn, peer, h, 0)
+}
+
+// ClientHandshakeWithJitter is ClientHandshake with send-side timing smear.
+func ClientHandshakeWithJitter(conn net.PacketConn, peer net.Addr, h *compiler.Handshake, jitter time.Duration) (*compiler.PacketSession, error) {
+	if _, err := runHandshake(h, conn, peer, true, jitter); err != nil {
 		return nil, err
 	}
 	return h.FinishPacket()
@@ -494,7 +492,7 @@ func ClientHandshake(conn net.PacketConn, peer net.Addr, h *compiler.Handshake) 
 // ServerHandshake waits for one client and completes the generated datagram
 // handshake. conn must be an already-listening UDP socket.
 func ServerHandshake(conn net.PacketConn, h *compiler.Handshake) (net.Addr, *compiler.PacketSession, error) {
-	peer, err := runHandshake(h, conn, nil, false)
+	peer, err := runHandshake(h, conn, nil, false, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -512,9 +510,9 @@ func ServerHandshake(conn net.PacketConn, h *compiler.Handshake) (net.Addr, *com
 //   - when it is the local role's turn to receive, wait silently, dropping
 //     every datagram that does not authenticate under the expected step;
 //   - while waiting, retransmit the last sent frame with exponential backoff;
-//   - a client whose first step is a receive sends one random "knock" so
+//   - a client whose first step is a receive sends an authenticated knock so
 //     server-first handshake patterns have a peer address to answer.
-func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isClient bool) (net.Addr, error) {
+func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isClient bool, jitter time.Duration) (net.Addr, error) {
 	var last []byte
 	sentOnce := false
 
@@ -526,15 +524,10 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 
 		if spec.Direction == h.Role() {
 			if peer == nil {
-				// Server-first pattern: wait for any datagram so we have an
-				// address. The client sends one random knock for exactly this
-				// purpose; malformed probe data only supplies an address and
-				// is never answered with an error.
-				if err := conn.SetReadDeadline(time.Now().Add(handshakeTimeout)); err != nil {
-					return nil, err
-				}
-				buf := make([]byte, maxDatagram)
-				_, addr, err := conn.ReadFrom(buf)
+				// Server-first: wait for an authenticated knock. Random
+				// probes (Alice, IMC 2020) must not elicit the real first
+				// frame — that was a confirmation oracle.
+				addr, err := waitAuthenticatedKnock(conn, h, handshakeTimeout)
 				if err != nil {
 					return nil, err
 				}
@@ -545,7 +538,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 				return nil, err
 			}
 			last = append(last[:0], frame...)
-			if _, err := conn.WriteTo(frame, peer); err != nil {
+			if err := writeDatagram(conn, peer, h.WrapDatagram(frame), jitter); err != nil {
 				return nil, err
 			}
 			sentOnce = true
@@ -553,13 +546,15 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 		}
 
 		// Incoming step. A client in a server-first pattern has nothing to
-		// retransmit yet; one random knock gives the server an address.
+		// retransmit yet; an authenticated knock gives the server an address
+		// without looking like a fully-encrypted first payload.
 		if isClient && !sentOnce {
-			knock := make([]byte, 32)
-			if _, err := rand.Read(knock); err != nil {
+			knock, err := h.EncodeKnock()
+			if err != nil {
 				return nil, err
 			}
-			if _, err := conn.WriteTo(knock, peer); err != nil {
+			last = append(last[:0], knock...)
+			if err := writeDatagram(conn, peer, h.WrapDatagram(knock), jitter); err != nil {
 				return nil, err
 			}
 			sentOnce = true
@@ -578,7 +573,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 				var ne net.Error
 				if errors.As(err, &ne) && ne.Timeout() {
 					if last != nil && peer != nil {
-						if _, werr := conn.WriteTo(last, peer); werr != nil {
+						if werr := writeDatagram(conn, peer, h.WrapDatagram(last), jitter); werr != nil {
 							return nil, werr
 						}
 					}
@@ -593,7 +588,11 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 			if peer != nil && addr.String() != peer.String() {
 				continue
 			}
-			if err := h.RecvStep(buf[:n]); err != nil {
+			inner, uerr := h.UnwrapDatagram(buf[:n])
+			if uerr != nil {
+				continue
+			}
+			if err := h.RecvStep(inner); err != nil {
 				continue // silent drop: wrong nonce, wrong step, or a probe
 			}
 			if peer == nil {
@@ -611,4 +610,35 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 		return nil, errors.New("handshake completed without a peer address")
 	}
 	return peer, nil
+}
+
+// waitAuthenticatedKnock reads datagrams until one unwraps to a knock MAC
+// under this handshake's PSK. Unauthenticated probes stay unanswered.
+func waitAuthenticatedKnock(conn net.PacketConn, h *compiler.Handshake, timeout time.Duration) (net.Addr, error) {
+	deadline := time.Now().Add(timeout)
+	buf := make([]byte, maxDatagram)
+	for {
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			return nil, fmt.Errorf("knock: %w", ErrHandshakeTimeout)
+		}
+		if err := conn.SetReadDeadline(time.Now().Add(remain)); err != nil {
+			return nil, err
+		}
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				return nil, fmt.Errorf("knock: %w", ErrHandshakeTimeout)
+			}
+			return nil, err
+		}
+		inner, err := h.UnwrapDatagram(buf[:n])
+		if err != nil {
+			continue
+		}
+		if h.VerifyKnock(inner) {
+			return addr, nil
+		}
+	}
 }

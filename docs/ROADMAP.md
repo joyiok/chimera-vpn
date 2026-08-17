@@ -19,7 +19,10 @@
 ## 2. ~~GitHub Actions CI~~（已完成）
 
 `.github/workflows/ci.yml`：根模块 fmt/vet/test-race/build、Windows 子模块双标签
-test/vet + amd64 交叉编译、gobind Java 签名冒烟。
+test/vet + amd64 交叉编译、**windows-latest 上 Wails GUI（`with_transport`）并上传
+`ChimeraClient.exe` + `wintun.dll`**、**ubuntu-latest 上 gomobile + Gradle debug APK**、
+**macos-latest 上 gomobile iOS XCFramework + 无签名 Simulator xcodebuild**、
+gobind Java 签名冒烟。iOS 已签名 IPA 仍需要仓库外的 Apple 证书，CI 不出。
 
 ## 3. ~~长期丢包恢复（packet ACK）~~（已完成）
 
@@ -48,7 +51,7 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 **实现**：`internal/tunnel/decoy.go` + `ServerMux.WithDecoy`。非法首包（client-first
 模式 RecvStep 失败）用 `generation XOR 0xC0DEC0DEC0DEC0DE` 生成的第二种协议回一帧；
 源地址 1s 间隙 + 全局 32 帧/秒 + 体积 ≤ min(1200, 3×探测包) 防放大。
-`disable_decoy` 可关。server-first 的 knock 仍发真实首帧（与合法客户端不可分）。
+`disable_decoy` 可关。server-first 需要 PSK-MAC knock，随机探针不再拿到真实首帧。
 
 ## 6. 车道 B：CDN/直播广播下行
 
@@ -73,8 +76,14 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 - ~~NAT keepalive + 空闲会话回收~~ ✅（生产存活硬需求：`ControlKeepalive` 0x04、
   `WithIdleTimeout`；客户端 `SetKeepalive`）
 - ~~包长整形~~ ✅（`compiler.DefaultShapeBuckets` 128/512/1024/1452；无 pad_length
-  的基因型跳过；`disable_shape` 可关）。时序抖动仍缺。
-- 密钥轮换协议（客户端 `GenerationWindow` 已探测；服务端仍单 generation）。
+  的基因型跳过；`disable_shape` 可关）
+- ~~时序抖动~~ ✅（截断指数 IAT，上限 `jitter_ms` 默认 20ms；对齐 obfs4/CCS 2015，
+  不用均匀间隔）
+- ~~密钥轮换协议~~ ✅（服务端 `GenerationWindow` 并行接受 gen…gen+N；客户端超时探测。
+  server-first knock 仍绑定基代，见 PROTOCOL.md）
+- ~~GFW 全加密启发式（gfw.report / Wu 2023）~~ ✅（握手数据报随机可打印封面 Ex2/Ex4；
+  不模仿 TLS/HTTP）
+- ~~主动探测确认预言机（IMC 2020）~~ ✅（认证 knock + 已认证首包重放表，默认可落盘）
 
 ## 9. 多机/分布式部署
 

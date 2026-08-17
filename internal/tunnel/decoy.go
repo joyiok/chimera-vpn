@@ -74,7 +74,11 @@ func (m *ServerMux) maybeDecoy(addr net.Addr, probe []byte) {
 		return
 	}
 	frame, err := encodeDecoyFrame(m.decoy)
-	if err != nil || !allowDecoySize(len(probe), len(frame)) {
+	if err != nil {
+		return
+	}
+	wire := compiler.WrapHandshakeDatagram(m.decoy.Genome, frame)
+	if !allowDecoySize(len(probe), len(wire)) {
 		return
 	}
 	m.mu.Lock()
@@ -83,7 +87,7 @@ func (m *ServerMux) maybeDecoy(addr net.Addr, probe []byte) {
 	if !ok {
 		return
 	}
-	_, _ = m.conn.WriteTo(frame, addr)
+	writeDatagramAsync(m.conn, addr, wire, m.jitterMax)
 }
 
 // takeDecoyTokenLocked consumes one global decoy slot. Caller holds m.mu.

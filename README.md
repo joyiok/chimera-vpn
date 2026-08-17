@@ -7,7 +7,7 @@ CHIMERA 方案的第一步：**不模仿任何已知协议，而是从一颗 256
 本仓库是这条路线的可运行原型，当前已扩展为跨平台 monorepo。
 
 **接手开发请看文档**：
-[交接说明](docs/HANDOFF.md) · [架构](docs/ARCHITECTURE.md) · [协议](docs/PROTOCOL.md) · [构建](docs/BUILD.md) · [路线图](docs/ROADMAP.md) · [安全边界](docs/SECURITY.md)
+[交接说明](docs/HANDOFF.md) · [架构](docs/ARCHITECTURE.md) · [协议](docs/PROTOCOL.md) · [构建](docs/BUILD.md) · [部署](docs/DEPLOY.md) · [路线图](docs/ROADMAP.md) · [安全边界](docs/SECURITY.md)
 
 
 
@@ -116,10 +116,10 @@ app record s2c  : "payload from the other direction" (round trip OK)
 
 ## 当前边界（重要）
 
-这**不是**高风险环境下的生产 VPN，但核心数据面与主要抗探测控件已经可运行：
+这**不是**高风险环境下的完整抗审查系统，但数据面与守护进程已按自建 VPN 生产运维收紧：
 
-- 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接、Windows 路由接管、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形
-- 未实现：真机 Android/iOS 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、时序抖动、服务端多 generation 并行
+- 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接、Windows 路由接管、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形、发送时序抖动、服务端 generation 窗口、chimerad 单会话故障隔离、握手可打印封面（gfw.report FEP Ex2/Ex4）、server-first 认证 knock、握手首包重放表
+- 未实现：真机 Android/iOS 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、完整流量变形、跨重启持久重放账本
 - `EstimatedEntropyBits` 是生成器自记账的近似值，不是安全证明
 
 ---
@@ -127,9 +127,8 @@ app record s2c  : "payload from the other direction" (round trip OK)
 ## 下一步（按建议顺序）
 
 1. **真机联调**：Android `protect(fd)` + VpnService；iOS excludedRoutes + NEPacketTunnelProvider
-2. **时序抖动**与服务端 generation 窗口
-3. **车道 B**：密文分片发布到 CDN/直播载体，客户端以拟人行为拉取
-4. **对抗评估**：包长分布、时序、分类器误伤率测量
+2. **车道 B**：密文分片发布到 CDN/直播载体，客户端以拟人行为拉取
+3. **对抗评估**：包长分布、时序、分类器误伤率测量（含 gfw.report 启发式在真实网络上的对照）
 
 ## 目录
 
@@ -173,6 +172,11 @@ journalctl -u chimerad -f
 **多客户端与自动分配**：服务端在 `client_cidr`（如 `10.99.0.0/24`）内自动给每个客户端分配唯一 TUN 地址（`.1` 保留给网关，`.2` 起分配，释放后复用）。握手完成后服务器立即下发加密控制包，Android/iOS 先取地址再建虚拟网卡；界面上的“本机 TUN 地址”成为服务端未开启分配时的回退项。
 
 ## 移动端构建
+
+GitHub Actions 会上传：
+
+- `ChimeraClient-android-debug` — `ubuntu-latest`，gomobile AAR + `assembleDebug`
+- `ChimeraBind-ios-xcframework` — `macos-latest`，gomobile XCFramework（不是已签名 IPA）
 
 ```bash
 # Android：生成 app/libs/bind.aar（需要 ANDROID_HOME + NDK）

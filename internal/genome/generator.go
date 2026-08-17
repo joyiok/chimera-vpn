@@ -339,7 +339,7 @@ func (g *generator) lengthField(minBytes int, isAppRecord bool) FieldSpec {
 	} else {
 		all := []opt{{EncU8, 1}, {EncU16, 3}, {EncU24, 2}, {EncU32, 2}}
 		for _, o := range all {
-			if maxIntValue(o.enc) >= minBytes {
+			if maxIntValue(o.enc) >= int64(minBytes) {
 				opts = append(opts, o)
 			}
 		}
@@ -555,7 +555,7 @@ func maxEncodedFieldSize(f FieldSpec) int {
 	return 0
 }
 
-func maxIntValue(enc string) int {
+func maxIntValue(enc string) int64 {
 	switch enc {
 	case EncU8:
 		return 1<<8 - 1

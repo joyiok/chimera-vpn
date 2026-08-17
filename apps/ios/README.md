@@ -60,6 +60,17 @@ cp -R apps/ios/build/ChimeraBind.xcframework apps/ios/ChimeraVPN/ChimeraBind.xcf
 
 gomobile 会把 Go 包 `bind` 的顶层函数导出为 `Bind` 前缀的 C 函数（`BindStart`、`BindStop`、`BindSend`、`BindReceive`）。`GoBind.swift` 通过 `#if canImport(ChimeraBind)` 封装这些调用；当 XCFramework 尚未生成或未链接时，Swift 会自动使用返回错误的桩实现，工程仍可解析。
 
+## CI 构建
+
+GitHub Actions job `ios-xcframework` 跑在 `macos-latest`：
+
+1. `./apps/ios/build-ios-core.sh`（`gomobile bind -target=ios,iossimulator,macos`）
+2. 无签名 `xcodebuild -scheme ChimeraVPN -destination 'generic/platform=iOS Simulator'`
+3. 上传 artifact `ChimeraBind-ios-xcframework`
+
+这是 Go 核心 framework，**不是**已签名 IPA。真机 / TestFlight 仍需下面的开发者账号与 entitlements。
+CI 里的 `xcodebuild` 在 XCFramework 未写入 `pbxproj` 时走 `GoBind.swift` 的桩分支，用来确认 Swift 脚手架能编译。
+
 ## 签名与 entitlements
 
 Packet Tunnel Provider 必须使用真实开发者账号签名，否则系统会拒绝加载 NetworkExtension。需要处理：

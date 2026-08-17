@@ -22,18 +22,17 @@ command -v go >/dev/null 2>&1 || {
   exit 1
 }
 
-# Install gomobile if it is not already available.
-if ! command -v gomobile >/dev/null 2>&1; then
-  echo "==> gomobile not found; installing golang.org/x/mobile/cmd/gomobile@latest"
-  (cd "$REPO_ROOT" && go install golang.org/x/mobile/cmd/gomobile@latest)
-  GOMOBILEDIR="$(go env GOPATH)/bin"
-  if [ -x "$GOMOBILEDIR/gomobile" ]; then
-    export PATH="$GOMOBILEDIR:$PATH"
-  fi
-fi
+export PATH="$(go env GOPATH)/bin:$PATH"
+
+echo "==> Installing gomobile / gobind from go.mod tool versions"
+(cd "$REPO_ROOT" && go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind)
 
 command -v gomobile >/dev/null 2>&1 || {
   echo "error: gomobile still not found in PATH after install attempt" >&2
+  exit 1
+}
+command -v gobind >/dev/null 2>&1 || {
+  echo "error: gobind still not found in PATH after install attempt" >&2
   exit 1
 }
 
@@ -46,7 +45,7 @@ gomobile init
 
 echo "==> Building $GO_PACKAGE with gomobile bind"
 mkdir -p "$BUILD_DIR" "$XCODE_DIR"
-gomobile bind \
+GOFLAGS=-mod=mod gomobile bind \
   -target=ios,iossimulator,macos \
   -iosversion="$IOS_VERSION" \
   -o "$FRAMEWORK_BUILT" \

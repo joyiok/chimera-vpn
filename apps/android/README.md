@@ -49,8 +49,7 @@ cd /home/joy/chimera/apps/android
 1. 安装 `golang.org/x/mobile/cmd/gomobile` 和 `gobind`（如尚未安装）；
 2. 执行 `gomobile init`；
 3. 从仓库根目录执行
-   `GOFLAGS=-mod=mod gomobile bind -target=android -o app/libs/bind.aar chimera/bind`；
-4. 将生成的 `bind.aar` 复制到 `apps/android/app/libs/bind.aar`。
+   `GOFLAGS=-mod=mod gomobile bind -target=android -androidapi 26 -o apps/android/app/libs/bind.aar chimera/bind`。
 
 在 `bind.aar` 生成之前，Android 工程也可以正常编译。`GoBind.kt` 会尝试通过
 `Class.forName("bind.Bind")` 反射加载 Go 绑定；加载失败时返回明确错误：
@@ -58,6 +57,17 @@ cd /home/joy/chimera/apps/android
 ```text
 Go core not built: run ./build-android-core.sh first
 ```
+
+## CI 构建
+
+GitHub Actions job `android-apk` 跑在 `ubuntu-latest`（Android 不需要 macOS runner）：
+
+1. 安装 JDK 17、Android SDK Platform 35、NDK r26d
+2. `./build-android-core.sh`（`gomobile bind -androidapi 26`）
+3. Gradle 8.9 `assembleDebug`
+4. 上传 artifact `ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）
+
+PR / `main` 推送 / 手动 `workflow_dispatch` 都会跑。Debug APK 可 sideload，未做 Play 签名。
 
 ## 打开与运行
 

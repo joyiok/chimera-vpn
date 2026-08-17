@@ -84,3 +84,54 @@ func TestHandshakeCoversBothKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestHandshakeHasCleartextLengthField: UPGen (Wails et al., USENIX
+// Security 2025) always places a length field in the clear so generated
+// protocols look like structured encrypted designs, not fully-encrypted
+// protocols that GFW-style classifiers already block.
+func TestHandshakeHasCleartextLengthField(t *testing.T) {
+	for i := 0; i < 80; i++ {
+		g, err := Generate(seedFor(3000+i), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range g.Handshake {
+			if m.LengthFieldIndex < 0 {
+				t.Fatalf("seed %d pattern %s message %s has no plaintext length field", i, g.HandshakePattern, m.Name)
+			}
+			if m.LengthFieldIndex >= len(m.PlainFields) {
+				t.Fatalf("length field index %d out of range on %s", m.LengthFieldIndex, m.Name)
+			}
+			if m.PlainFields[m.LengthFieldIndex].Kind != FieldLength {
+				t.Fatalf("length index does not point at a length field")
+			}
+		}
+	}
+}
+
+func TestDefaultCipherStaysAESFamily(t *testing.T) {
+	// ChaCha is GenerateWithCipher only: adding it to the lottery would
+	// re-key every existing (seed, generation) deployment.
+	for i := 0; i < 60; i++ {
+		g, err := Generate(seedFor(4000+i), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch g.AppRecord.Cipher {
+		case CipherAES128GCM, CipherAES192GCM, CipherAES256GCM:
+		default:
+			t.Fatalf("default cipher %s; want AES-GCM family", g.AppRecord.Cipher)
+		}
+	}
+}
+
+func TestMaxIntValueU32FitsInt64(t *testing.T) {
+	// EncU32's max must not be typed as 32-bit int: gomobile android/armeabi-v7a
+	// rejects `1<<32 - 1` as int (overflows).
+	if got, want := maxIntValue(EncU32), int64(1<<32-1); got != want {
+		t.Fatalf("maxIntValue(EncU32)=%d want %d", got, want)
+	}
+	if maxIntValue(EncU8) < 16 {
+		t.Fatal("u8 max too small for a 16-byte handshake field")
+	}
+}

@@ -11,6 +11,9 @@
   "max_sessions": 256,
   "disable_decoy": false,
   "disable_shape": false,
+  "jitter_ms": 20,
+  "generation_window": 2,
+  "replay_path": "/var/lib/chimera/handshake.replay",
   "tun": {
     "name": "chimera0",
     "address": "10.99.0.1/24",

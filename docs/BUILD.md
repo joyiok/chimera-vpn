@@ -43,6 +43,8 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
   "max_sessions": 256,
   "disable_decoy": false,
   "disable_shape": false,
+  "jitter_ms": 20,
+  "generation_window": 2,
   "tun": {"name":"chimera0","address":"10.99.0.1/24","mtu":1400}
 }
 
@@ -53,6 +55,12 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
 # rate_limit_kbps: 每客户端入口限速（KiB/s），0 = 不限速
 # max_sessions: 已建立会话上限（默认 256）
 # disable_decoy / disable_shape: 关闭探测诱饵 / 包长整形
+# jitter_ms: 发送时序抖动上限（省略或 0 = 20ms，负数关闭）
+# generation_window: 额外接受 gen..gen+N（省略 = 2，0 = 只接受配置的 generation）
+# replay_path: 握手重放表落盘（省略 = /var/lib/chimera/handshake.replay，空串 = 仅内存）
+# 校验配置：chimerad -config /etc/chimera/server.json -check-config
+# 配置文件权限建议 0600（含 PSK）
+# 一页部署：docs/DEPLOY.md
 
 # 运行（需 root 或 CAP_NET_ADMIN）
 sudo ./dist/chimerad -config /etc/chimera/server.json
@@ -94,16 +102,29 @@ go test -tags with_transport ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
 ```
 
+真正的 GUI 可执行文件必须在 Windows 上用 Wails + CGO 构建。GitHub Actions
+job `windows-wails`（`windows-latest`）会执行 `wails build -tags with_transport`，
+附带官方签名的 `wintun.dll`，并把 `ChimeraClient-windows-amd64` 作为
+workflow artifact 上传。PR / `main` 推送 / 手动 `workflow_dispatch` 都会跑。
+产物未代码签名，SmartScreen 可能提示，见 `apps/windows/build/README.md`。
+
 ## Android
 
 ```bash
 cd apps/android
 ./build-android-core.sh      # 需要 ANDROID_HOME + NDK，生成 app/libs/bind.aar
-# 然后用 Android Studio 打开 apps/android
+# 然后用 Android Studio 打开 apps/android，或：
+#   gradle assembleDebug     # Gradle 8.7+ / JDK 17 / compileSdk 35
 ```
 
 未生成 AAR 时工程也能编译，连接时给出明确错误。
 Go 绑定 API 见 `bind/bind.go`；`gobind -lang=java chimera/bind` 可离线核对签名。
+`gomobile bind` 使用 `-androidapi 26`（与 `minSdk` 一致；新 NDK 已不再提供 API 16）。
+
+GitHub Actions job `android-apk`（`ubuntu-latest`，不需要 macOS）会装 SDK/NDK、
+跑 `build-android-core.sh`、再 `gradle assembleDebug`，上传 artifact
+`ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。Debug APK 用
+Android 默认 debug 密钥，可 sideload，不是 Play 签名包。
 
 ## iOS
 
@@ -115,8 +136,13 @@ cd apps/ios
 # 用 Xcode 打开 ChimeraVPN/ChimeraVPN.xcodeproj
 ```
 
-需要 Apple Developer 账号配置 App Group 与 NetworkExtension entitlements，
-两个 target 的 bundle id 见 pbxproj。
+GitHub Actions job `ios-xcframework`（`macos-latest`）会执行同一脚本，并把
+`ChimeraBind.xcframework` 作为 artifact `ChimeraBind-ios-xcframework` 上传；
+随后对共享 scheme `ChimeraVPN` 做无签名 iOS Simulator `xcodebuild`
+（Swift 脚手架编译检查；`#if canImport(ChimeraBind)` 在未链入 framework 时走桩）。
+
+这不是已签名 IPA。Packet Tunnel 上架/真机仍需要 Apple Developer 账号配置
+App Group 与 NetworkExtension entitlements，两个 target 的 bundle id 见 pbxproj。
 
 ## 移动端 Go 绑定签名核对
 

@@ -132,7 +132,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.99.0.1")
 
         let ipv4Settings = NEIPv4Settings(addresses: [localIP], subnetMasks: ["255.255.255.0"])
-        ipv4Settings.includedRoutes = [NEIPv4Route.defaultRoute()]
+        ipv4Settings.includedRoutes = [
+            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "0.0.0.0")
+        ]
         if let host = Self.hostOf(serverAddr), Self.isIPv4(host) {
             ipv4Settings.excludedRoutes = [
                 NEIPv4Route(destinationAddress: host, subnetMask: "255.255.255.255")

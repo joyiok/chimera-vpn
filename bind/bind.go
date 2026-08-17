@@ -2,7 +2,7 @@
 //
 // Build for Android:
 //
-// gomobile bind -target=android -o bind.aar chimera/bind
+// gomobile bind -target=android -androidapi 26 -o bind.aar chimera/bind
 //
 // Build for iOS:
 //
@@ -38,6 +38,7 @@ func Start(seedHex string, generation int64, pskHex string, serverAddr string) (
 		SeedHex:          seedHex,
 		Generation:       uint64(generation),
 		GenerationWindow: 2,
+		JitterMax:        20 * time.Millisecond,
 		PSKHex:           pskHex,
 		ServerAddr:       serverAddr,
 	})

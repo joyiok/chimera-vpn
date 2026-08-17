@@ -146,13 +146,13 @@ class ChimeraVpnService : VpnService() {
             }
 
             val pfd = builder.establish()
+                ?: throw IllegalStateException("VpnService.establish 返回 null（用户可能拒绝了 VPN 授权）")
             vpnInterface = pfd
             vpnHandle = handle
             isRunning = true
 
             postStatus(getString(R.string.status_connected))
             postLog("Go 核心已启动，handle=$handle，本地地址 $tunAddr/24${if (assigned != null) "（服务器分配）" else "（手动配置）"}")
-
 
             val input = FileInputStream(pfd.fileDescriptor)
             val output = FileOutputStream(pfd.fileDescriptor)

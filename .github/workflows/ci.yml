@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,7 +14,7 @@ jobs:
     name: Root module (test + vet + fmt)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
@@ -43,7 +44,7 @@ jobs:
       run:
         working-directory: apps/windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
@@ -63,11 +64,85 @@ jobs:
       - name: Cross-compile windows/amd64
         run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
 
+  # Real GUI: Wails + WebView2 needs Windows + CGO. The Ubuntu job above only
+  # proves the Go packages cross-compile; this job produces ChimeraClient.exe.
+  windows-wails:
+    name: Windows Wails GUI (with_transport)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            apps/windows/go.sum
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Set up MinGW (CGO)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Add MinGW to PATH
+        shell: bash
+        run: |
+          loc="${{ steps.msys2.outputs.msys2-location }}"
+          if [ -z "$loc" ]; then loc="C:/msys64"; fi
+          echo "$loc/mingw64/bin" >> "$GITHUB_PATH"
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
+
+      - name: Build ChimeraClient.exe
+        working-directory: apps/windows
+        env:
+          CGO_ENABLED: "1"
+          CC: gcc
+        run: |
+          gcc --version
+          go mod tidy
+          wails build -tags with_transport -m
+
+      - name: Fetch signed wintun.dll (amd64)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "wintun-0.14.1.zip"
+          $out = Join-Path $env:RUNNER_TEMP "wintun-out"
+          curl.exe -fsSL -o $zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          $expected = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+          if ($actual -ne $expected) { throw "wintun hash mismatch: $actual" }
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $bin = "apps/windows/build/bin"
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Copy-Item "$out/wintun/bin/amd64/wintun.dll" "$bin/wintun.dll"
+          Copy-Item "$out/wintun/LICENSE.txt" "$bin/wintun-LICENSE.txt"
+
+      - name: Upload Windows client
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChimeraClient-windows-amd64
+          path: |
+            apps/windows/build/bin/ChimeraClient.exe
+            apps/windows/build/bin/wintun.dll
+            apps/windows/build/bin/wintun-LICENSE.txt
+          if-no-files-found: error
+          retention-days: 14
+
   gobind-smoke:
     name: gobind signature smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
@@ -75,4 +150,120 @@ jobs:
           cache: false
 
       - name: gobind -lang=java chimera/bind
-        run: go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind
+        run: |
+          # gobind prints the Java stubs then exits 1 because this module
+          # does not import golang.org/x/mobile/bind. The smoke test is the
+          # generated method signatures, not gobind's extra JNI compile step.
+          set +e
+          out=$(go run golang.org/x/mobile/cmd/gobind@latest -lang=java chimera/bind 2>&1)
+          printf '%s\n' "$out"
+          set -e
+          printf '%s\n' "$out" | grep -F 'public static native long start('
+          printf '%s\n' "$out" | grep -F 'public static native long socketFD('
+          printf '%s\n' "$out" | grep -F 'public static native String assignedIP('
+          printf '%s\n' "$out" | grep -F 'public static native void send('
+          printf '%s\n' "$out" | grep -F 'public static native byte[] receive('
+          printf '%s\n' "$out" | grep -F 'public static native void stop('
+
+  # gomobile + Android SDK/NDK. Ubuntu is enough; this does not need macos.
+  android-apk:
+    name: Android debug APK (gomobile + Gradle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "tools platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Bind Go core (bind.aar)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          ./apps/android/build-android-core.sh
+          test -s apps/android/app/libs/bind.aar
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: assembleDebug
+        working-directory: apps/android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload Android client
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChimeraClient-android-debug
+          path: |
+            apps/android/app/build/outputs/apk/debug/app-debug.apk
+            apps/android/app/libs/bind.aar
+          if-no-files-found: error
+          retention-days: 14
+
+  # gomobile iOS bind needs Xcode. This is the Go core XCFramework, not a
+  # signed IPA — Network Extension still needs the operator's Apple certs.
+  ios-xcframework:
+    name: iOS XCFramework (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Bind Go core (ChimeraBind.xcframework)
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          xcodebuild -version
+          ./apps/ios/build-ios-core.sh
+          test -d apps/ios/build/ChimeraBind.xcframework
+
+      - name: xcodebuild iOS Simulator (unsigned)
+        working-directory: apps/ios/ChimeraVPN
+        run: |
+          xcodebuild \
+            -project ChimeraVPN.xcodeproj \
+            -scheme ChimeraVPN \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ../build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            build
+
+      - name: Upload iOS XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChimeraBind-ios-xcframework
+          path: apps/ios/build/ChimeraBind.xcframework
+          if-no-files-found: error
+          retention-days: 14

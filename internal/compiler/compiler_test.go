@@ -194,3 +194,84 @@ func TestReadFrameStream(t *testing.T) {
 		_ = left
 	}
 }
+
+// TestClientFirstFramesDifferAcrossSeeds: UPGen's security argument needs
+// each (seed, generation) to look like a different unknown protocol. The
+// first client-to-server datagram must not be a shared magic blob.
+func TestClientFirstFramesDifferAcrossSeeds(t *testing.T) {
+	seen := map[string]int{}
+	for i := 0; i < 40; i++ {
+		g, err := genome.Generate(testSeed(8000+i), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g.Handshake[0].Direction != genome.DirClient {
+			continue
+		}
+		psk := testPSK(8000 + i)
+		cp, err := Compile(g, psk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := NewHandshake(cp, genome.DirClient, psk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame, _, err := h.EncodeStep()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := string(frame[:min(16, len(frame))])
+		seen[key]++
+	}
+	if len(seen) < 8 {
+		t.Fatalf("first-client frames too similar across seeds: %d distinct prefixes", len(seen))
+	}
+}
+
+func TestHandshakeRecvStepWithWirePad(t *testing.T) {
+	var g *genome.ProtocolGenome
+	var psk []byte
+	for i := 0; i < 40; i++ {
+		cand, err := genome.Generate(testSeed(14000+i), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cand.Handshake[0].Direction != genome.DirClient {
+			continue
+		}
+		g = cand
+		psk = testPSK(14000 + i)
+		break
+	}
+	if g == nil {
+		t.Fatal("no client-first genome")
+	}
+	cp, err := Compile(g, psk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewHandshake(cp, genome.DirClient, psk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewHandshake(cp, genome.DirServer, psk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, _, err := client.EncodeStep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := WrapHandshakeDatagram(g, frame)
+	if len(wire) >= 160 && len(wire) <= 700 {
+		t.Fatalf("client-first wire %d still in IMC band", len(wire))
+	}
+	inner, err := UnwrapHandshakeDatagram(g, wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.RecvStep(inner); err != nil {
+		t.Fatalf("padded handshake frame rejected: %v", err)
+	}
+}

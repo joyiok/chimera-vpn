@@ -131,6 +131,17 @@ build\dev.bat
 build\dev.bat with_transport
 ```
 
+### 3.4 CI 构建
+
+本机没有 Windows 时，用 GitHub Actions job `windows-wails`：
+
+- runner：`windows-latest`（Wails + CGO + WebView2；Linux 交叉编译出不了 GUI）
+- 命令：`wails build -tags with_transport`
+- 产物 artifact：`ChimeraClient-windows-amd64`（`ChimeraClient.exe` + 官方签名 `wintun.dll`）
+
+在 Actions 打开对应 run 下载 artifact，或手动 `workflow_dispatch`。
+未签名 exe 可能触发 SmartScreen，见 `build/README.md`。
+
 ---
 
 ## 4. 架构说明
@@ -179,7 +190,7 @@ const defaultServer = await window.go.chimera.App.SelectServerDefault()
 | `Stop() error` | 优雅停止传输层，应用进程保持存活 |
 | `Status() string` | 返回 `disconnected` / `connecting` / `connected` / `error: <detail>` |
 | `Config() (map[string]any, error)` | 返回当前保存的 `seedHex/generation/pskHex/serverAddr` |
-| `SelectServerDefault() string` | 返回默认服务器地址常量 `127.0.0.1:443` |
+| `SelectServerDefault() string` | 返回默认服务器地址常量 `127.0.0.1:4789` |
 
 ### 4.4 core_bridge 构建标签
 
@@ -215,7 +226,7 @@ client.Close() error
   "seedHex": "00ff...",
   "generation": 0,
   "pskHex": "11ee...",
-  "serverAddr": "127.0.0.1:443"
+  "serverAddr": "127.0.0.1:4789"
 }
 ```
 
@@ -253,7 +264,7 @@ Wails CLI 的 `-m`/`--skipmodtidy` 选项会跳过编译前的 `go mod tidy`。
 ## 6. 数据面状态（务必阅读）
 
 - `with_transport` 构建现在会完成完整链路：
-  CHIMERA UDP 握手 -> 服务器自动分配地址 -> Wintun 创建虚拟网卡 -> netsh 配置地址/DNS -> 双向包泵（TUN<->core）。
-- 构建前请把 `wintun.dll` 放到 `ChimeraClient.exe` 同目录（可从 WireGuard 官方发布包提取），并以管理员身份运行。
-- **尚未完成**：Windows 默认路由接管（`0.0.0.0/0` 路由到 Chimera0、服务器地址例外路由）。当前版本虚拟网卡与核心连通，但系统流量是否走隧道取决于 Windows 路由表。
-- 生产发布前还需要处理：Wintun 驱动签名、代码签名、自动提权/UAC manifest。
+  CHIMERA UDP 握手 -> 服务器自动分配地址 -> Wintun 创建虚拟网卡 -> netsh 配置地址/DNS -> 双向包泵（TUN<->core）-> 半默认路由接管。
+- 构建前请把 `wintun.dll` 放到 `ChimeraClient.exe` 同目录（CI artifact 已附带官方签名 DLL），并以管理员身份运行。
+- 路由接管：`0.0.0.0/1` + `128.0.0.0/1` 走 Wintun，服务器 IP `/32` 走物理网卡；`store=active`。失败按非致命处理。待真机 `route print -4` 验收。
+- 生产发布前还需要处理：代码签名、自动提权/UAC manifest、SmartScreen。

@@ -13,110 +13,71 @@ package main
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"chimera/core"
+	"chimera/internal/compiler"
+	"chimera/internal/genome"
 	"chimera/internal/tun"
 )
 
-type tunConfig struct {
-	Name    string `json:"name"`
-	Address string `json:"address"` // CIDR, e.g. 10.99.0.1/24
-	MTU     int    `json:"mtu"`
-}
-
-type serverConfig struct {
-	Listen     string    `json:"listen"`
-	SeedHex    string    `json:"seed_hex"`
-	Generation uint64    `json:"generation"`
-	PSKHex     string    `json:"psk_hex"`
-	ClientCIDR string    `json:"client_cidr"`
-	Tun        tunConfig `json:"tun"`
-
-	// Cipher overrides the genome cipher draw ("" = default). Both
-	// endpoints must agree; e.g. "chacha20-poly1305".
-	Cipher string `json:"cipher"`
-
-	// KeepaliveSec refreshes NAT mappings on idle links (0 = default 25s,
-	// negative = disable).
-	KeepaliveSec int `json:"keepalive_sec"`
-	// IdleTimeoutSec reaps sessions quiet for that long (0 = disable).
-	IdleTimeoutSec int `json:"idle_timeout_sec"`
-	// RateLimitKBps caps each client's inbound rate in KiB/s (0 = off).
-	RateLimitKBps int `json:"rate_limit_kbps"`
-	// MaxSessions caps established clients (0 = default 256).
-	MaxSessions int `json:"max_sessions"`
-	// DisableDecoy turns off anti-probe decoy replies (default: decoys on).
-	DisableDecoy bool `json:"disable_decoy"`
-	// DisableShape turns off datagram length shaping (default: on).
-	DisableShape bool `json:"disable_shape"`
-}
-
-func defaultConfig() serverConfig {
-	return serverConfig{
-		Listen:         "0.0.0.0:4789",
-		ClientCIDR:     "10.99.0.0/24",
-		KeepaliveSec:   25,
-		IdleTimeoutSec: 180,
-		MaxSessions:    256,
-		Tun:            tunConfig{Name: "chimera0", Address: "10.99.0.1/24", MTU: 1400},
-	}
-}
-
 func main() {
 	configPath := flag.String("config", "/etc/chimera/server.json", "server JSON config path")
+	checkConfig := flag.Bool("check-config", false, "validate config and exit")
 	flag.Parse()
 
-	cfg := defaultConfig()
-	raw, err := os.ReadFile(*configPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	log.SetFlags(log.LstdFlags | log.LUTC)
+
+	cfg, err := loadServerConfig(*configPath)
+	if err != nil {
 		fatal(err)
 	}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			fatal(fmt.Errorf("parse %s: %w", *configPath, err))
-		}
+	if w := configFilePermWarning(*configPath); w != "" {
+		log.Printf("warning: %s", w)
 	}
 
-	coreCfg := core.Config{
-		SeedHex:              cfg.SeedHex,
-		Generation:           cfg.Generation,
-		PSKHex:               cfg.PSKHex,
-		ServerAddr:           cfg.Listen,
-		ClientCIDR:           cfg.ClientCIDR,
-		Cipher:               cfg.Cipher,
-		KeepaliveInterval:    time.Duration(cfg.KeepaliveSec) * time.Second,
-		IdleTimeout:          time.Duration(cfg.IdleTimeoutSec) * time.Second,
-		RateLimitBytesPerSec: cfg.RateLimitKBps * 1024,
-		MaxSessions:          cfg.MaxSessions,
-		DisableDecoy:         cfg.DisableDecoy,
-		DisableShape:         cfg.DisableShape,
+	coreCfg, err := toCoreConfig(cfg)
+	if err != nil {
+		fatal(err)
 	}
 	normalized, err := core.NormalizeConfig(coreCfg)
 	if err != nil {
 		fatal(err)
 	}
 	coreCfg = normalized
-	if cfg.Tun.Name == "" {
-		cfg.Tun.Name = "chimera0"
+
+	if *checkConfig {
+		seed, err := parseHex(coreCfg.SeedHex)
+		if err != nil {
+			fatal(err)
+		}
+		g, err := genome.GenerateWithCipher(seed, coreCfg.Generation, coreCfg.Cipher)
+		if err != nil {
+			fatal(fmt.Errorf("generate genome: %w", err))
+		}
+		fp := g.ProtocolFingerprint
+		if len(fp) > 16 {
+			fp = fp[:16]
+		}
+		fmt.Printf("config ok listen=%s generation=%d window=%d jitter=%s sessions=%d genome=%s cover_len=%d replay=%s\n",
+			coreCfg.ServerAddr, coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax, coreCfg.MaxSessions,
+			fp, compiler.CoverLen(g), coreCfg.ReplayPath)
+		return
 	}
-	if cfg.Tun.Address == "" {
-		cfg.Tun.Address = "10.99.0.1/24"
+
+	if cfg.DisableDecoy {
+		log.Printf("warning: anti-probe decoys are disabled")
 	}
-	if cfg.Tun.MTU == 0 {
-		cfg.Tun.MTU = 1400
+	if cfg.DisableShape {
+		log.Printf("warning: length shaping is disabled")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -127,74 +88,6 @@ func main() {
 	}
 }
 
-// clientRoute maps a client's tunnel source IP to its server-side Conn.
-type clientRoute struct {
-	mu     sync.RWMutex
-	byIP   map[string]*core.Conn
-	byConn map[*core.Conn]string
-}
-
-func newClientRoute() *clientRoute {
-	return &clientRoute{byIP: map[string]*core.Conn{}, byConn: map[*core.Conn]string{}}
-}
-
-func (r *clientRoute) register(conn *core.Conn, ip string) *core.Conn {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if old, ok := r.byConn[conn]; ok && old != "" {
-		delete(r.byIP, old)
-	}
-	var displaced *core.Conn
-	if other, ok := r.byIP[ip]; ok && other != conn {
-		displaced = other
-		delete(r.byConn, other)
-	}
-	r.byConn[conn] = ip
-	r.byIP[ip] = conn
-	return displaced
-}
-
-func (r *clientRoute) lookup(ip string) *core.Conn {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.byIP[ip]
-}
-
-func (r *clientRoute) remove(conn *core.Conn) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ip := r.byConn[conn]
-	delete(r.byConn, conn)
-	if ip != "" {
-		delete(r.byIP, ip)
-	}
-}
-
-// packetIP returns the source or destination IP of a raw IPv4/IPv6 packet.
-func packetIP(packet []byte, dst bool) string {
-	if len(packet) == 0 {
-		return ""
-	}
-	offset := 12
-	if dst {
-		offset = 16
-	}
-	switch packet[0] >> 4 {
-	case 4:
-		if len(packet) >= 20 {
-			return net.IP(packet[offset : offset+4]).String()
-		}
-	case 6:
-		if len(packet) >= 40 {
-			if dst {
-				return net.IP(packet[24:40]).String()
-			}
-			return net.IP(packet[8:24]).String()
-		}
-	}
-	return ""
-}
-
 func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	dev, err := tun.Open(tc.Name)
 	if err != nil {
@@ -203,11 +96,8 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	defer dev.Close()
 	log.Printf("TUN interface %s opened", dev.Name())
 
-	if out, err := exec.Command("ip", "addr", "add", tc.Address, "dev", dev.Name()).CombinedOutput(); err != nil {
-		return fmt.Errorf("ip addr add: %v: %s", err, out)
-	}
-	if out, err := exec.Command("ip", "link", "set", "dev", dev.Name(), "mtu", fmt.Sprint(tc.MTU), "up").CombinedOutput(); err != nil {
-		return fmt.Errorf("ip link set: %v: %s", err, out)
+	if err := configureTUN(dev.Name(), tc.Address, tc.MTU); err != nil {
+		return err
 	}
 	log.Printf("address %s, MTU %d", tc.Address, tc.MTU)
 
@@ -219,10 +109,11 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	if err := srv.Start(); err != nil {
 		return err
 	}
-	log.Printf("accepting clients on udp/%s fingerprint=%s", coreCfg.ServerAddr, fingerprint(coreCfg))
+	log.Printf("accepting clients on udp/%s fingerprint=%s generation=%d window=%d jitter=%s",
+		coreCfg.ServerAddr, fingerprint(coreCfg), coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax)
 
 	routes := newClientRoute()
-	errCh := make(chan error, 4)
+	fatalCh := make(chan error, 1)
 
 	// TUN -> right client, selected by destination IP.
 	go func() {
@@ -230,7 +121,10 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 		for {
 			n, err := dev.Read(buf)
 			if err != nil {
-				errCh <- fmt.Errorf("tun read: %w", err)
+				select {
+				case fatalCh <- fmt.Errorf("tun read: %w", err):
+				default:
+				}
 				return
 			}
 			dst := packetIP(buf[:n], true)
@@ -239,8 +133,8 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 				continue // packet for an unknown client; drop silently
 			}
 			if err := conn.SendPacket(buf[:n]); err != nil {
-				errCh <- fmt.Errorf("send to %s: %w", dst, err)
-				return
+				log.Printf("drop packet to %s: %v", dst, err)
+				continue
 			}
 		}
 	}()
@@ -251,17 +145,18 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 			conn, err := srv.Accept(ctx)
 			if err != nil {
 				if ctx.Err() == nil {
-					errCh <- fmt.Errorf("accept: %w", err)
+					select {
+					case fatalCh <- fmt.Errorf("accept: %w", err):
+					default:
+					}
 				}
 				return
 			}
-			log.Printf("client %s connected", conn.RemoteAddr())
-			go pumpClientToTun(conn, dev, routes, errCh)
+			log.Printf("client %s connected generation=%d", conn.RemoteAddr(), conn.Generation())
+			go pumpClientToTun(conn, dev, routes)
 		}
 	}()
 
-	// Ops heartbeat: session counts + authenticated-datagram length
-	// histogram (groundwork for length shaping).
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
@@ -278,16 +173,18 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	}()
 
 	select {
-	case err := <-errCh:
+	case err := <-fatalCh:
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	case <-ctx.Done():
 		log.Println("shutting down")
-		time.Sleep(100 * time.Millisecond)
 		return nil
 	}
 }
 
-func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute, errCh chan<- error) {
+func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute) {
 	defer conn.Close()
 	defer routes.remove(conn)
 	registered := false
@@ -300,7 +197,7 @@ func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute, errC
 		pkt, err := conn.ReceivePacket()
 		if err != nil {
 			if registered {
-				errCh <- fmt.Errorf("client %s read: %w", conn.RemoteAddr(), err)
+				log.Printf("client %s disconnected: %v", conn.RemoteAddr(), err)
 			}
 			return
 		}
@@ -313,7 +210,7 @@ func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute, errC
 			registered = true
 		}
 		if _, err := dev.Write(pkt); err != nil {
-			errCh <- fmt.Errorf("tun write: %w", err)
+			log.Printf("tun write from %s: %v", conn.RemoteAddr(), err)
 			return
 		}
 	}

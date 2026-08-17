@@ -2,8 +2,12 @@
 apps/android/app/libs/*.aar
 apps/android/.gradle/
 apps/android/build/
+apps/android/app/build/
+apps/android/local.properties
 apps/ios/ChimeraVPN/build/
+apps/ios/build/
 apps/ios/*.xcframework
+apps/ios/**/*.xcframework
 apps/windows/build/bin/
 apps/windows/windows-client
 apps/windows/frontend/node_modules/

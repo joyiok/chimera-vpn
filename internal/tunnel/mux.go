@@ -3,8 +3,8 @@ package tunnel
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +18,8 @@ const (
 	minFirstDatagram     = 16
 	newHandshakeMinGap   = time.Second
 )
+
+var errProbe = errors.New("handshake probe")
 
 // tokenBucket is a simple byte-rate limiter for one session. rate is bytes
 // per second; capacity bounds bursts. A nil bucket means unlimited.
@@ -95,6 +97,11 @@ type ServerTunnel struct {
 
 	// limiter caps this client's inbound datagram rate (nil = unlimited).
 	limiter *tokenBucket
+
+	// jitterMax smears send timing; copied from the mux at handshake finish.
+	jitterMax time.Duration
+	// generation is the genome generation this session matched.
+	generation uint64
 }
 
 func (t *ServerTunnel) SendPacket(packet []byte) error {
@@ -105,17 +112,11 @@ func (t *ServerTunnel) SendPacket(packet []byte) error {
 	}
 	t.sessMu.Lock()
 	frame, err := t.sess.Encode(packet)
-	if err != nil {
-		t.sessMu.Unlock()
-		return err
-	}
-	if len(frame) > maxDatagram {
-		t.sessMu.Unlock()
-		return fmt.Errorf("encrypted frame too large: %d", len(frame))
-	}
-	_, err = t.conn.WriteTo(frame, t.peer)
 	t.sessMu.Unlock()
 	if err != nil {
+		return err
+	}
+	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
 		return err
 	}
 	t.touch()
@@ -133,6 +134,10 @@ func (t *ServerTunnel) idleFor() time.Duration {
 // IdleFor is the exported form of idleFor for operators and tests.
 func (t *ServerTunnel) IdleFor() time.Duration { return t.idleFor() }
 
+// Generation is the genome generation this session matched. Useful when
+// the mux is serving a rotation window of several species.
+func (t *ServerTunnel) Generation() uint64 { return t.generation }
+
 // sendKeepalive emits a ControlKeepalive frame if the link has been quiet.
 func (t *ServerTunnel) sendKeepalive(interval time.Duration) {
 	if t.idleFor() < interval {
@@ -144,12 +149,9 @@ func (t *ServerTunnel) sendKeepalive(interval time.Duration) {
 	if err != nil {
 		return
 	}
-	if len(frame) > maxDatagram {
-		return
-	}
-	if _, err := t.conn.WriteTo(frame, t.peer); err == nil {
-		t.touch()
-	}
+	writeDatagramAsync(t.conn, t.peer, frame, t.jitterMax)
+	// Keepalives refresh NAT but must not postpone idle reaping: only
+	// authenticated inbound (including the peer's keepalive) touches.
 }
 
 // maybeSendLossControl asks the client to skip a gap once the
@@ -166,10 +168,7 @@ func (t *ServerTunnel) maybeSendLossControl() {
 	if err != nil {
 		return
 	}
-	if len(frame) > maxDatagram {
-		return
-	}
-	if _, err := t.conn.WriteTo(frame, t.peer); err != nil {
+	if err := writeDatagram(t.conn, t.peer, frame, t.jitterMax); err != nil {
 		return
 	}
 	t.ack.observeAck(sent)
@@ -294,6 +293,7 @@ type pendingHandshake struct {
 	backoff  time.Duration
 	addr     net.Addr
 	recvOK   bool // true after at least one authenticated client step
+	primed   bool // first datagram already consumed by selectHandshake
 }
 
 // frameLenBuckets bound the datagram-length histogram exposed by Stats;
@@ -356,6 +356,9 @@ type ServerMux struct {
 	maxSessions  int
 	decoy        *compiler.CompiledProtocol
 	shapeBuckets []int
+	jitterMax    time.Duration
+	cps          []*compiler.CompiledProtocol
+	replays      *replayCache
 
 	mu               sync.Mutex
 	pending          map[string]*pendingHandshake
@@ -380,6 +383,8 @@ func NewServerMux(conn net.PacketConn, cp *compiler.CompiledProtocol, psk []byte
 		keepalive:   DefaultKeepaliveInterval,
 		idleTimeout: time.Duration(1 << 62), // reaping off unless configured
 		frameLens:   make([]uint64, len(frameLenBuckets)+1),
+		cps:         []*compiler.CompiledProtocol{cp},
+		replays:     newReplayCache(),
 		pending:     map[string]*pendingHandshake{},
 		lastCreate:  map[string]time.Time{},
 		established: map[string]*ServerTunnel{},
@@ -443,6 +448,49 @@ func (m *ServerMux) WithShapeBuckets(buckets []int) *ServerMux {
 	return m
 }
 
+// WithJitter enables truncated-exponential send-side timing smear in
+// (0, max] for handshake, data, and control datagrams. max <= 0 disables jitter.
+func (m *ServerMux) WithJitter(max time.Duration) *ServerMux {
+	if max < 0 {
+		max = 0
+	}
+	m.jitterMax = max
+	return m
+}
+
+// WithReplayPath loads (and later persists) the handshake/knock replay
+// table from path. Empty disables persistence. Call before Run.
+func (m *ServerMux) WithReplayPath(path string) *ServerMux {
+	if strings.TrimSpace(path) == "" {
+		return m
+	}
+	m.replays = loadReplayCache(path)
+	return m
+}
+
+// WithProtocols replaces the protocol list served by this mux. cps[0] is
+// the base generation (used for server-first knocks and decoy pairing).
+// Additional entries are tried for client-first first packets so a
+// generation rotation window can stay live. Call before Run.
+func (m *ServerMux) WithProtocols(cps []*compiler.CompiledProtocol) *ServerMux {
+	if len(cps) == 0 {
+		return m
+	}
+	m.cps = append([]*compiler.CompiledProtocol(nil), cps...)
+	m.cp = cps[0]
+	return m
+}
+
+func (m *ServerMux) protocolList() []*compiler.CompiledProtocol {
+	if len(m.cps) > 0 {
+		return m.cps
+	}
+	if m.cp != nil {
+		return []*compiler.CompiledProtocol{m.cp}
+	}
+	return nil
+}
+
 // Run drives the reader and retransmit timer until ctx is cancelled or the
 // mux is closed.
 func (m *ServerMux) Run(ctx context.Context) {
@@ -495,9 +543,8 @@ func (m *ServerMux) timerLoop(ctx context.Context) {
 }
 
 // sweepSessions sends keepalives on idle established sessions and closes
-// those idle past the configured timeout. Keepalives reset lastActive, so
-// a client that has vanished entirely is reaped after idleTimeout while a
-// live one stays connected forever.
+// those idle past the configured timeout. Server-originated keepalives do
+// not touch lastActive, so a vanished client is still reaped.
 func (m *ServerMux) sweepSessions() {
 	m.mu.Lock()
 	tuns := make([]*ServerTunnel, 0, len(m.established))
@@ -558,8 +605,8 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 		m.mu.Lock()
 		m.noteFrameLen(len(data))
 		m.mu.Unlock()
-		if ackErr == nil && due && len(frame) <= maxDatagram {
-			_, _ = tun.conn.WriteTo(frame, tun.peer) // best effort
+		if ackErr == nil && due {
+			writeDatagramAsync(tun.conn, tun.peer, frame, tun.jitterMax)
 		}
 		tun.feed(pkt)
 		return
@@ -590,9 +637,10 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 			m.maybeDecoy(addr, data)
 			return
 		}
-		h, err := compiler.NewHandshake(m.cp, genome.DirServer, m.psk)
+		h, primed, err := m.selectHandshake(data)
 		if err != nil {
 			m.mu.Unlock()
+			m.maybeDecoy(addr, data)
 			return
 		}
 		p = &pendingHandshake{
@@ -600,6 +648,7 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 			addr:    addr,
 			created: now,
 			backoff: retransmitBase,
+			primed:  primed,
 		}
 		m.pending[key] = p
 		m.lastCreate[key] = now
@@ -609,20 +658,90 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 	m.advance(p, data)
 }
 
+// selectHandshake picks a compiled protocol for a new first datagram.
+// Client-first generations in the window are tried after stripping that
+// species' printable cover; a match returns primed=true so advance does
+// not consume the datagram twice. Server-first knocks must verify a PSK
+// MAC under the base generation cover — a knock cannot name a generation,
+// and an unauthenticated probe must not elicit the real first frame.
+func (m *ServerMux) selectHandshake(data []byte) (*compiler.Handshake, bool, error) {
+	cps := m.protocolList()
+	if len(cps) == 0 {
+		return nil, false, errors.New("mux has no protocol")
+	}
+	var primary, serverFirst *compiler.Handshake
+	for i, cp := range cps {
+		h, err := compiler.NewHandshake(cp, genome.DirServer, m.psk)
+		if err != nil {
+			continue
+		}
+		if i == 0 {
+			primary = h
+		}
+		spec, err := h.CurrentSpec()
+		if err != nil {
+			continue
+		}
+		if spec.Direction == genome.DirServer {
+			if serverFirst == nil {
+				serverFirst = h
+			}
+			continue
+		}
+		inner, err := compiler.UnwrapHandshakeDatagram(cp.Genome, data)
+		if err != nil {
+			continue
+		}
+		trimmed, err := compiler.DeclaredFrame(spec, inner)
+		if err != nil {
+			continue
+		}
+		if err := h.RecvStep(trimmed); err == nil {
+			if m.replays.seen(trimmed) {
+				return nil, false, errProbe
+			}
+			return h, true, nil
+		}
+	}
+	if primary == nil {
+		return nil, false, errors.New("mux has no usable protocol")
+	}
+	spec, err := primary.CurrentSpec()
+	if err != nil {
+		return primary, false, nil
+	}
+	if spec.Direction == genome.DirServer && serverFirst != nil {
+		inner, err := compiler.UnwrapHandshakeDatagram(cps[0].Genome, data)
+		if err != nil || !compiler.VerifyKnock(m.psk, inner) {
+			return nil, false, errProbe
+		}
+		if m.replays.seen(compiler.KnockReplayKey(inner)) {
+			return nil, false, errProbe
+		}
+		return serverFirst, false, nil
+	}
+	return primary, false, nil
+}
+
 // advance feeds one datagram to one pending handshake and sends any outgoing
 // steps that become due. Unauthenticated first packets may get a decoy
 // reply; later failures stay silent.
 func (m *ServerMux) advance(p *pendingHandshake, data []byte) {
 	p.mu.Lock()
-	spec, err := p.h.CurrentSpec()
-	if err != nil {
-		p.mu.Unlock()
-		return // already finished; handled elsewhere
-	}
-
-	if spec.Direction == genome.DirServer {
-		// Server-first pattern: the datagram is a knock; send our first
-		// message(s) now. Do not try to decode the knock.
+	if p.primed {
+		p.primed = false
+		p.recvOK = true
+		p.last = nil
+		p.attempts = 0
+		p.backoff = retransmitBase
+		m.mu.Lock()
+		m.noteFrameLen(len(data))
+		m.mu.Unlock()
+		if p.h.Done() {
+			p.mu.Unlock()
+			m.finishHandshake(p)
+			return
+		}
 		m.sendOutgoing(p)
 		done := p.h.Done()
 		p.mu.Unlock()
@@ -632,7 +751,36 @@ func (m *ServerMux) advance(p *pendingHandshake, data []byte) {
 		return
 	}
 
-	if err := p.h.RecvStep(data); err != nil {
+	spec, err := p.h.CurrentSpec()
+	if err != nil {
+		p.mu.Unlock()
+		return // already finished; handled elsewhere
+	}
+
+	if spec.Direction == genome.DirServer {
+		// Server-first: the datagram already verified as a knock in
+		// selectHandshake. Send our first message(s); do not decode it.
+		m.sendOutgoing(p)
+		done := p.h.Done()
+		p.mu.Unlock()
+		if done {
+			m.finishHandshake(p)
+		}
+		return
+	}
+
+	inner, uerr := p.h.UnwrapDatagram(data)
+	if uerr != nil {
+		progressed := p.recvOK || p.last != nil
+		addr := p.addr
+		p.mu.Unlock()
+		if !progressed {
+			m.abandonPending(addr)
+			m.maybeDecoy(addr, data)
+		}
+		return
+	}
+	if err := p.h.RecvStep(inner); err != nil {
 		progressed := p.recvOK || p.last != nil
 		addr := p.addr
 		p.mu.Unlock()
@@ -687,7 +835,7 @@ func (m *ServerMux) sendOutgoing(p *pendingHandshake) {
 		}
 		p.last = append(p.last[:0], frame...)
 		p.lastSent = time.Now()
-		if _, err := m.conn.WriteTo(frame, p.addr); err != nil {
+		if err := writeDatagram(m.conn, p.addr, p.h.WrapDatagram(frame), m.jitterMax); err != nil {
 			return
 		}
 	}
@@ -715,7 +863,7 @@ func (m *ServerMux) retransmit() {
 			continue
 		}
 		if p.last != nil && !p.lastSent.IsZero() && now.Sub(p.lastSent) >= p.backoff {
-			if _, err := m.conn.WriteTo(p.last, p.addr); err == nil {
+			if err := writeDatagram(m.conn, p.addr, p.h.WrapDatagram(p.last), m.jitterMax); err == nil {
 				p.lastSent = now
 				p.attempts++
 				p.backoff = retransmitBase * time.Duration(1<<min(p.attempts, 4))
@@ -731,12 +879,14 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 		return
 	}
 	tun := &ServerTunnel{
-		conn:    m.conn,
-		peer:    p.addr,
-		sess:    sess,
-		recv:    make(chan []byte, 128),
-		closed:  make(chan struct{}),
-		limiter: newTokenBucket(m.rateLimit, m.rateLimit),
+		conn:       m.conn,
+		peer:       p.addr,
+		sess:       sess,
+		recv:       make(chan []byte, 128),
+		closed:     make(chan struct{}),
+		limiter:    newTokenBucket(m.rateLimit, m.rateLimit),
+		jitterMax:  m.jitterMax,
+		generation: p.h.ProtocolGeneration(),
 	}
 	if len(m.shapeBuckets) > 0 {
 		tun.sess.SetShapeBuckets(m.shapeBuckets)

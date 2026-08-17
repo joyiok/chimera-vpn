@@ -68,11 +68,13 @@ cmd/chimerad ──▶ chimera/core ──▶ internal/tunnel ──▶ internal
 
 ```go
 type Config struct {
-    SeedHex    string // 32 字节 seed，64 个 hex 字符，决定协议物种
-    Generation uint64 // 协议代数/变异号
-    PSKHex     string // 32 字节预共享密钥，64 个 hex 字符
-    ServerAddr string // 客户端填 host:port；服务端填监听地址
-    ClientCIDR string // 仅服务端：客户端 TUN 地址池，如 10.99.0.0/24
+    SeedHex            string
+    Generation         uint64
+    GenerationWindow   uint64        // 服务端并行接受；客户端超时探测
+    PSKHex             string
+    ServerAddr         string
+    ClientCIDR         string
+    JitterMax          time.Duration // 0 = 关闭；生产默认 20ms
 }
 
 client, _ := core.NewClient(cfg)
