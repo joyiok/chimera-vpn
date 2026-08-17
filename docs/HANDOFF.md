@@ -3,7 +3,7 @@
 > 仓库：https://github.com/joyiok/chimera-vpn
 > 分支：`main`（Public）
 > 状态：可编译、可测试的研究型原型；数据面与守护进程已按自建 VPN 收紧，**不是**已验证的抗 GFW 产品。
-> 睡醒后从 [DEPLOY.md](DEPLOY.md) 跑服务端 + 下 Windows / Android artifact（iOS 是 XCFramework，不是 IPA）。
+> 睡醒后先 `bash scripts/selftest.sh`（不用 root），再按 [DEPLOY.md](DEPLOY.md) 跑服务端 + Linux `chimerac` / Windows / Android artifact（iOS 是 XCFramework，不是 IPA）。
 
 ## 10 分钟快速了解
 
@@ -29,6 +29,7 @@ internal/tunnel      UDP 握手 + 多客户端复用 + packet tunnel
 core / bind          跨平台 Go API + gomobile 移动端绑定
         │
         ├── cmd/chimerad        Linux 服务端（TUN + 地址池 + 路由）
+        ├── cmd/chimerac        Linux 客户端（-check / TUN / 自动重连）
         ├── apps/windows        Windows Wails GUI + Wintun 数据面
         ├── apps/android        Android VpnService 客户端
         └── apps/ios            iOS NEPacketTunnelProvider 客户端
@@ -41,12 +42,13 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | 协议生成/握手/AEAD | ✅ 完成 | `go test -race` 通过 |
 | UDP 多客户端复用 | ✅ 完成 | 3 客户端并发测试 |
 | 地址自动分配 | ✅ 完成 | `10.99.0.0/24` 池测试 |
-| Linux 服务端 | ✅ 代码完成 | 编译/静态检查；TUN 需 root 实机 |
+| Linux 服务端 | ✅ 代码完成 | 编译/静态检查；TUN 需 root 实机；`scripts/selftest.sh` 覆盖 -no-tun 握手+回显 |
+| Linux CLI 客户端 | ✅ 代码完成 | `chimerac -check` + selftest；TUN/默认路由需 root；入站静默 90s 自动重连 |
 | Windows GUI | ✅ 控制面 + Wintun 包泵 + 默认路由接管 | Linux 上交叉编译到 Windows 通过；路由需真机验收 |
 | Android/iOS | ⚠️ CI 可出包 | Android debug APK + iOS XCFramework 由 Actions 构建；真机与 IPA 签名未做 |
 | Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ✅ 完成 | ACK/SKIP 控制载荷；`-race` 测试含丢卡恢复用例 |
-| CI | ✅ 完成 | 根模块 + Windows 交叉编译 + **windows-latest Wails GUI** + **ubuntu Android debug APK** + **macos iOS XCFramework** + gobind |
+| CI | ✅ 完成 | 根模块 + **userspace selftest** + Linux CLI artifact + Windows 交叉编译 + **windows-latest Wails GUI** + **ubuntu Android debug APK** + **macos iOS XCFramework** + gobind |
 | ChaCha20-Poly1305 | ✅ 完成 | `cipher` 配置强制覆盖；端到端 + 不匹配拒连测试 |
 | 握手重放防护 | ✅ 完成 | 流模式 64 序号位图，录制重放被拒 |
 | NAT keepalive / 空闲回收 / 限速 | ✅ 完成 | `keepalive_sec`/`idle_timeout_sec`/`rate_limit_kbps` 配置 |
@@ -66,12 +68,14 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 1. `git clone https://github.com/joyiok/chimera-vpn`
 2. 安装 Go 1.24+
 3. `go test -race ./...` —— 必须全绿
-4. 阅读顺序：
+4. `bash scripts/selftest.sh` —— 不用 root，验证本机二进制能握手、拿地址、打通数据面
+5. 阅读顺序：
    - `docs/ARCHITECTURE.md`（代码地图与数据流）
    - `docs/PROTOCOL.md`（线上格式与密码学）
    - `docs/BUILD.md`（各平台构建）
    - `docs/ROADMAP.md`（下一步与实现提示）
-5. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或车道 B/C 开始；
+6. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或车道 B/C 开始；
+   若在 Linux 旁，先 `chimerac -check` 再考虑 `-take-route`。
    若在 Windows 真机旁，先验收路由接管（`route print -4`）。
    生产部署：`chmod 0600` 配置、`chimerad -check-config`、`deploy/chimerad.service`；
    一页操作见 [DEPLOY.md](DEPLOY.md)。
@@ -84,6 +88,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
   gofmt -l .          # 除 frontend/node_modules 外应为空
   go vet ./...
   go test -race ./...
+  bash scripts/selftest.sh
   cd apps/windows && go test ./... && go test -tags with_transport ./...
   ```
 - 推送前确保 `git status` 无未跟踪二进制（Wails 构建会生成 `windows-client.exe`，已加入 .gitignore）。

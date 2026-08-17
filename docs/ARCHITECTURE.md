@@ -5,7 +5,9 @@
 ```text
 chimera/                     Go module `chimera`，go 1.24
 ├── cmd/gencompiler/         协议基因编译器 CLI（可独立演示）
-├── cmd/chimerad/            Linux 服务端
+├── cmd/chimerad/            Linux 服务端（`-no-tun` 自测回显）
+├── cmd/chimerac/            Linux 客户端（`-check` / TUN）
+├── cmd/chimera-init/        生成匹配的 server.json + client.json
 ├── core/                    跨平台 Client/Server API + IPv4 地址池
 ├── bind/                    gomobile 绑定：Start/AssignedIP/Stop/Send/Receive
 ├── internal/
@@ -13,7 +15,8 @@ chimera/                     Go module `chimera`，go 1.24
 │   ├── genome/              协议基因组类型与生成器
 │   ├── compiler/            编解码器、握手状态机、Session/PacketSession
 │   ├── tunnel/              UDP 握手、PacketTunnel、ServerMux 多路复用
-│   └── tun/                 Linux TUN 设备封装
+│   ├── tun/                 Linux TUN 设备封装
+│   └── netpkt/              IPv4/ICMP 探测包与路由辅助
 ├── apps/windows/            Wails v2 子模块（module chimera/windows-client）
 │   ├── app.go               GUI 后端：Start/Stop/Status/Config
 │   ├── core_bridge.go       默认 stub（build tag !with_transport）
@@ -30,7 +33,7 @@ chimera/                     Go module `chimera`，go 1.24
 ```text
 apps/windows ──replace──▶ 根模块 chimera/core
 apps/android/iOS ──gomobile──▶ chimera/bind ──▶ chimera/core
-cmd/chimerad ──▶ chimera/core ──▶ internal/tunnel ──▶ internal/compiler ──▶ internal/genome
+cmd/chimerad + cmd/chimerac ──▶ chimera/core ──▶ internal/tunnel ──▶ internal/compiler ──▶ internal/genome
 ```
 
 规则：

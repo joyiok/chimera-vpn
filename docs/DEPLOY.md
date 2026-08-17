@@ -5,17 +5,39 @@
 
 这是自建研究型 VPN 的操作步骤，不是“抗 GFW 保证”。威胁模型见 [SECURITY.md](SECURITY.md)。
 
-## 0. 生成密钥
+## 0. 本机自测（不用 root）
 
 ```bash
-go run ./cmd/gencompiler \
-  -seed 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
-# 不传 -seed 会打印随机 32 字节，务必保存
+bash scripts/selftest.sh
+# 期望：handshake + assigned IP + probe=echo → selftest ok
 ```
 
-PSK 另生成 32 随机字节（64 hex），不要复用 seed。
+有 root 且存在 `/dev/net/tun` 时，可再跑真实 TUN 路径（两个 netns）：
 
-## 1. Linux 服务端
+```bash
+sudo bash scripts/selftest-tun.sh
+# 期望：probe=icmp-reply（对端内核 ICMP 回显）
+```
+
+生成一对匹配的配置（PSK 文件 0600，不要提交）：
+
+```bash
+go run ./cmd/chimera-init -dir ./local -server YOUR.PUBLIC.IP:4789
+# 自测预设：go run ./cmd/chimera-init -dir /tmp/chimera-dev -dev
+```
+
+## 1. 生成密钥
+
+```bash
+go run ./cmd/chimera-init -dir ./local -server YOUR.PUBLIC.IP:4789
+# 或沿用 gencompiler 只看协议指纹：
+go run ./cmd/gencompiler \
+  -seed 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+```
+
+PSK 由 `chimera-init` 单独随机生成，不要复用 seed。
+
+## 2. Linux 服务端
 
 ```bash
 sudo mkdir -p /etc/chimera /var/lib/chimera
@@ -35,7 +57,25 @@ journalctl -u chimerad -f
 
 防火墙放行 `server.json` 里的 UDP 端口（默认 4789）。
 
-## 2. Windows 客户端
+`-no-tun` 只用于自测（把客户端数据包原样回显），**不要**写进 systemd。
+
+## 3. Linux 客户端
+
+```bash
+# GitHub Actions artifact Chimera-linux-amd64，或：
+CGO_ENABLED=0 go build -o dist/chimerac ./cmd/chimerac
+
+# 先探测（不用 TUN）：填好与服务器相同的 seed / PSK / host:port
+./dist/chimerac -config ./local/client.json -check
+# 期望：handshake ok … probe icmp-reply（对面是真 TUN）或 echo（对面是 -no-tun）
+
+# 真 VPN：需要 CAP_NET_ADMIN；-take-route 装 0.0.0.0/1 + 128.0.0.0/1，并加服务器 /32 例外
+sudo ./dist/chimerac -config ./local/client.json -take-route
+```
+
+连通后 `ip route` 应看到半默认路由走 `chimerac0`，服务器 IP `/32` 走物理网卡。回环地址会拒绝接管，避免把本机测网关劫持掉。
+
+## 4. Windows 客户端
 
 1. GitHub Actions 打开最新绿色 run，下载 artifact `ChimeraClient-windows-amd64`
    （`ChimeraClient.exe` + 官方签名 `wintun.dll`）。PR / `main` / `workflow_dispatch` 都会构建。
@@ -47,7 +87,7 @@ journalctl -u chimerad -f
 
 本机构建：`apps/windows` 下 `wails build -tags with_transport`（需要 Windows + CGO）。
 
-## 3. Android 客户端
+## 5. Android 客户端
 
 1. GitHub Actions job `android-apk`（`ubuntu-latest`）下载 artifact
    `ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。
@@ -57,7 +97,7 @@ journalctl -u chimerad -f
 
 本机构建：`apps/android/build-android-core.sh` 后 Android Studio 或 `gradle assembleDebug`。
 
-## 4. iOS 核心（不是 IPA）
+## 6. iOS 核心（不是 IPA）
 
 1. GitHub Actions job `ios-xcframework`（`macos-latest`）下载 artifact
    `ChimeraBind-ios-xcframework`。
@@ -67,8 +107,9 @@ journalctl -u chimerad -f
 
 本机构建：macOS 上 `apps/ios/build-ios-core.sh`。
 
-## 5. 不要做的事
+## 7. 不要做的事
 
 - 不要把配置文件 chmod 成 0644 或提交到 git。
 - 不要只升级一端。
+- 不要把 `chimerad -no-tun` 当生产 VPN（它只回显数据包）。
 - 不要把一次 `go test` 绿灯理解成已经绕过国家级审查。

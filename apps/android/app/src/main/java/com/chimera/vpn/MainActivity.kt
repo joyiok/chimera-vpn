@@ -52,6 +52,7 @@ class MainActivity : AppCompatActivity() {
         connectButton = findViewById(R.id.connectButton)
         statusText = findViewById(R.id.statusText)
         logText = findViewById(R.id.logText)
+        restoreForm()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -94,6 +95,10 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.toast_fill_all, Toast.LENGTH_SHORT).show()
             return
         }
+        if (seed.length != 64 || psk.length != 64) {
+            Toast.makeText(this, "seed 和 PSK 都必须是 64 位十六进制", Toast.LENGTH_SHORT).show()
+            return
+        }
 
         val generation = generationText.toLongOrNull()
         if (generation == null) {
@@ -108,6 +113,7 @@ class MainActivity : AppCompatActivity() {
             pskHex = psk,
             tunIp = tunIp
         )
+        saveForm(config)
 
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) {
@@ -118,6 +124,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun prefs() = getSharedPreferences("chimera_client", MODE_PRIVATE)
+
+    private fun restoreForm() {
+        val p = prefs()
+        serverInput.setText(p.getString(PREF_SERVER, ""))
+        seedInput.setText(p.getString(PREF_SEED, ""))
+        generationInput.setText(p.getString(PREF_GENERATION, "0"))
+        pskInput.setText(p.getString(PREF_PSK, ""))
+        tunIpInput.setText(p.getString(PREF_TUN_IP, "10.99.0.2"))
+    }
+
+    private fun saveForm(config: ChimeraVpnService.VpnConfig) {
+        prefs().edit()
+            .putString(PREF_SERVER, config.serverAddr)
+            .putString(PREF_SEED, config.seedHex)
+            .putString(PREF_GENERATION, config.generation.toString())
+            .putString(PREF_PSK, config.pskHex)
+            .putString(PREF_TUN_IP, config.tunIp)
+            .apply()
+    }
+
     private fun renderStatus(status: String) {
         statusText.text = status
         connectButton.text = if (status == getString(R.string.status_connected)) {
@@ -125,5 +152,13 @@ class MainActivity : AppCompatActivity() {
         } else {
             getString(R.string.connect)
         }
+    }
+
+    companion object {
+        private const val PREF_SERVER = "server"
+        private const val PREF_SEED = "seed"
+        private const val PREF_GENERATION = "generation"
+        private const val PREF_PSK = "psk"
+        private const val PREF_TUN_IP = "tun_ip"
     }
 }

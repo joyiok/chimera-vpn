@@ -22,8 +22,10 @@ final class VPNViewModel: ObservableObject {
     @Published var isBusy = false
 
     private let vpnManager = NEVPNManager.shared()
+    private let defaults = UserDefaults.standard
 
     init() {
+        restoreForm()
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name.NEVPNStatusDidChange,
             object: vpnManager.connection,
@@ -56,9 +58,16 @@ final class VPNViewModel: ObservableObject {
             status = "请填写服务器地址"
             return
         }
+        let seed = seedHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        let psk = pskHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard seed.count == 64, psk.count == 64 else {
+            status = "seed 和 PSK 都必须是 64 位十六进制（32 字节）"
+            return
+        }
 
         isBusy = true
         status = "正在准备配置..."
+        persistForm()
 
         let protocolConfiguration = NETunnelProviderProtocol()
         protocolConfiguration.providerBundleIdentifier = "com.chimera.vpn.tunnel"
@@ -130,6 +139,22 @@ final class VPNViewModel: ObservableObject {
             status = "未知状态"
         }
     }
+
+    private func persistForm() {
+        defaults.set(serverAddr, forKey: "serverAddr")
+        defaults.set(seedHex, forKey: "seedHex")
+        defaults.set(generation, forKey: "generation")
+        defaults.set(pskHex, forKey: "pskHex")
+        defaults.set(tunIP, forKey: "tunIP")
+    }
+
+    private func restoreForm() {
+        if let v = defaults.string(forKey: "serverAddr"), !v.isEmpty { serverAddr = v }
+        if let v = defaults.string(forKey: "seedHex") { seedHex = v }
+        if defaults.object(forKey: "generation") != nil { generation = defaults.integer(forKey: "generation") }
+        if let v = defaults.string(forKey: "pskHex") { pskHex = v }
+        if let v = defaults.string(forKey: "tunIP"), !v.isEmpty { tunIP = v }
+    }
 }
 
 struct ContentView: View {
@@ -150,8 +175,8 @@ struct ContentView: View {
                     TextField("Generation", value: $model.generation, format: .number)
                         .keyboardType(.numberPad)
 
-                    TextField("本机 TUN 地址（每台设备唯一）", text: $model.tunIP)
-                    SecureField("PSK (十六进制，可留空)", text: $model.pskHex)
+                    TextField("本机 TUN 地址（服务端未分配时回退）", text: $model.tunIP)
+                    SecureField("PSK (64 hex，必填)", text: $model.pskHex)
                         .textInputAutocapitalization(.never)
                         .disableAutocorrection(true)
                 }

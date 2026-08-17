@@ -37,6 +37,27 @@ jobs:
       - name: go build
         run: go build ./...
 
+      - name: userspace selftest
+        run: bash scripts/selftest.sh
+
+      - name: Linux CLI artifacts
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/chimerad ./cmd/chimerad
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/chimerac ./cmd/chimerac
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/chimera-init ./cmd/chimera-init
+
+      - name: Upload Linux CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chimera-linux-amd64
+          path: |
+            dist/chimerad
+            dist/chimerac
+            dist/chimera-init
+          if-no-files-found: error
+          retention-days: 14
+
   windows:
     name: Windows submodule (test + cross-compile)
     runs-on: ubuntu-latest

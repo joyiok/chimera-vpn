@@ -31,8 +31,9 @@
    写失败时退回内存。`replay_path: ""` 关闭持久化。
 4. **丢包恢复**：ACK/SKIP 推进窗口（跳过语义，不重传）；上层协议自带可靠性。
 5. **密码学**：AES-GCM 与 ChaCha20-Poly1305 均已接入；基因组默认只抽 AES 三档。
-6. **平台**：Windows 路由接管已实现待真机验收；移动端已接 protect/排除路由，未真机审计；
+6. **平台**：Windows / Linux 路由接管已实现待真机验收；移动端已接 protect/排除路由，未真机审计；
    配置含 PSK 明文落盘（建议 `chmod 0600`；Windows 用 0600，后续可 DPAPI）。
+   `bash scripts/selftest.sh` 覆盖本机 userspace 数据面，不替代真机路由验收。
 7. **DoS**：pending 上限 1024、单地址 1s 限速、每会话令牌桶、`max_sessions` 默认 256。
    单个客户端断开不再拖垮 chimerad。
 8. **UDP vs 论文中的 TCP**：Wu 2023 / IMC 2020 的测量对象是 TCP 首个 payload。
@@ -50,6 +51,7 @@
 - UDP 握手 6 种模式、3 客户端并发 mux。
 - 推断 FEP 检测器（Algorithm 1）对握手首包的豁免；首包/knock 重放不建第二会话。
 - 地址池分配/释放。
+- 本机 userspace 自测：`scripts/selftest.sh`（握手 + 分配 + 回显）。
 - 全部竞态检测：`go test -race ./...`。
 
 ## 参考文献（实现时对照）

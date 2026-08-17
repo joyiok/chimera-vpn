@@ -11,6 +11,7 @@ gofmt -l .            # 期望无输出（忽略 frontend/node_modules）
 go vet ./...
 go test -race ./...
 go build ./...
+bash scripts/selftest.sh   # 不用 root
 ```
 
 ## 协议基因编译器
@@ -60,6 +61,7 @@ CGO_ENABLED=0 go build -o dist/chimerad ./cmd/chimerad
 # replay_path: 握手重放表落盘（省略 = /var/lib/chimera/handshake.replay，空串 = 仅内存）
 # 校验配置：chimerad -config /etc/chimera/server.json -check-config
 # 配置文件权限建议 0600（含 PSK）
+# 本机自测（不用 TUN）：chimerad -config … -no-tun ；chimerac -check
 # 一页部署：docs/DEPLOY.md
 
 # 运行（需 root 或 CAP_NET_ADMIN）
@@ -69,7 +71,20 @@ sudo ./dist/chimerad -config /etc/chimera/server.json
 sudo ./scripts/setup-nat.sh eth0
 ```
 
-systemd 单元见 `deploy/chimerad.service`。
+systemd 单元见 `deploy/chimerad.service`。不要把 `-no-tun` 写进生产单元。
+
+## Linux 客户端
+
+```bash
+CGO_ENABLED=0 go build -o dist/chimerac ./cmd/chimerac
+./dist/chimerac -config client.json -check          # 握手 + ICMP 探测，不用 TUN
+sudo ./dist/chimerac -config client.json -take-route
+```
+
+`-check` 对 `-no-tun` 服务端得到 `probe=echo`，对真实 TUN 服务端得到 `probe=icmp-reply`。
+`-take-route` 安装 `0.0.0.0/1` + `128.0.0.0/1` 经 TUN，服务器 IPv4 `/32` 走 `ip route get` 选出的物理网卡；回环地址拒绝接管。IPv6 半默认路由尽力安装，防 IPv6 泄漏。入站静默超过 `-lost-after`（默认 90s）自动重握手；自己发出的 keepalive 不再被当成对端还活着。
+
+配对配置：`go run ./cmd/chimera-init -dir ./local -server host:4789`。
 
 ## Windows 客户端
 

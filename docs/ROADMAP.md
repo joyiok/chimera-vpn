@@ -4,6 +4,8 @@
 
 ## 1. ~~Windows 默认路由接管~~（已完成，待真机验收）
 
+Linux CLI（`cmd/chimerac -take-route`）使用同一套半默认路由语义，另加 IPv6 `::/1`+`8000::/1` 尽力堵泄漏。待远程真机验收。
+
 **实现**：`apps/windows/internal/bridge/route.go`（纯逻辑，跨平台可测）+
 `route_windows.go`（GetAdaptersAddresses + netsh）。
 
