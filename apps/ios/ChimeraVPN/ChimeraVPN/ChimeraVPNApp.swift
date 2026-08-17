@@ -86,9 +86,9 @@ final class VPNViewModel: ObservableObject {
             self.vpnManager.protocolConfiguration = protocolConfiguration
             self.vpnManager.isEnabled = true
 
-            self.vpnManager.saveToPreferences { error in
+            self.vpnManager.saveToPreferences { [weak self] error in
                 Task { @MainActor in
-                    guard let self = self else { return }
+                    guard let self else { return }
                     if let error {
                         self.status = "保存 VPN 配置失败: \(error.localizedDescription)"
                         self.isBusy = false
