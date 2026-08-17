@@ -1,4 +1,5 @@
 /dist/
+/local/
 apps/android/app/libs/*.aar
 apps/android/.gradle/
 apps/android/build/

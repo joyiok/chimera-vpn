@@ -32,6 +32,8 @@ import (
 func main() {
 	configPath := flag.String("config", "/etc/chimera/server.json", "server JSON config path")
 	checkConfig := flag.Bool("check-config", false, "validate config and exit")
+	noTun := flag.Bool("no-tun", false, "userspace packet echo (no TUN); self-test only, not a VPN")
+	listen := flag.String("listen", "", "override JSON listen address (e.g. 127.0.0.1:0)")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -39,6 +41,9 @@ func main() {
 	cfg, err := loadServerConfig(*configPath)
 	if err != nil {
 		fatal(err)
+	}
+	if *listen != "" {
+		cfg.Listen = *listen
 	}
 	if w := configFilePermWarning(*configPath); w != "" {
 		log.Printf("warning: %s", w)
@@ -83,15 +88,41 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, coreCfg, cfg.Tun); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx, coreCfg, cfg.Tun, *noTun); err != nil && !errors.Is(err, context.Canceled) {
 		fatal(err)
 	}
 }
 
-func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
+func run(ctx context.Context, coreCfg core.Config, tc tunConfig, noTun bool) error {
+	srv, err := core.NewServer(coreCfg)
+	if err != nil {
+		return err
+	}
+	defer srv.Close()
+	if err := srv.Start(); err != nil {
+		return err
+	}
+	log.Printf("accepting clients on udp/%s bound=%s fingerprint=%s generation=%d window=%d jitter=%s",
+		coreCfg.ServerAddr, srv.LocalAddr(), fingerprint(coreCfg), coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax)
+
+	if noTun {
+		return runUserspace(ctx, srv)
+	}
+	return runTUN(ctx, srv, tc)
+}
+
+func runUserspace(ctx context.Context, srv *core.Server) error {
+	log.Printf("warning: -no-tun userspace echo is for self-test only; packets are reflected, not routed")
+	fatalCh := make(chan error, 1)
+	go acceptLoop(ctx, srv, fatalCh, nil, true)
+	go statsLoop(ctx, srv)
+	return waitRun(ctx, fatalCh)
+}
+
+func runTUN(ctx context.Context, srv *core.Server, tc tunConfig) error {
 	dev, err := tun.Open(tc.Name)
 	if err != nil {
-		return fmt.Errorf("open TUN: %w (run as root or grant CAP_NET_ADMIN)", err)
+		return fmt.Errorf("open TUN: %w (run as root or grant CAP_NET_ADMIN, or pass -no-tun to self-test)", err)
 	}
 	defer dev.Close()
 	log.Printf("TUN interface %s opened", dev.Name())
@@ -101,21 +132,9 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	}
 	log.Printf("address %s, MTU %d", tc.Address, tc.MTU)
 
-	srv, err := core.NewServer(coreCfg)
-	if err != nil {
-		return err
-	}
-	defer srv.Close()
-	if err := srv.Start(); err != nil {
-		return err
-	}
-	log.Printf("accepting clients on udp/%s fingerprint=%s generation=%d window=%d jitter=%s",
-		coreCfg.ServerAddr, fingerprint(coreCfg), coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax)
-
 	routes := newClientRoute()
 	fatalCh := make(chan error, 1)
 
-	// TUN -> right client, selected by destination IP.
 	go func() {
 		buf := make([]byte, 64*1024)
 		for {
@@ -130,7 +149,7 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 			dst := packetIP(buf[:n], true)
 			conn := routes.lookup(dst)
 			if conn == nil {
-				continue // packet for an unknown client; drop silently
+				continue
 			}
 			if err := conn.SendPacket(buf[:n]); err != nil {
 				log.Printf("drop packet to %s: %v", dst, err)
@@ -139,39 +158,53 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 		}
 	}()
 
-	// Accept loop: one client pump per established session.
-	go func() {
-		for {
-			conn, err := srv.Accept(ctx)
-			if err != nil {
-				if ctx.Err() == nil {
-					select {
-					case fatalCh <- fmt.Errorf("accept: %w", err):
-					default:
-					}
+	go acceptLoop(ctx, srv, fatalCh, &tunAccept{dev: dev, routes: routes}, false)
+	go statsLoop(ctx, srv)
+	return waitRun(ctx, fatalCh)
+}
+
+type tunAccept struct {
+	dev    *tun.Device
+	routes *clientRoute
+}
+
+func acceptLoop(ctx context.Context, srv *core.Server, fatalCh chan error, tun *tunAccept, echo bool) {
+	for {
+		conn, err := srv.Accept(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				select {
+				case fatalCh <- fmt.Errorf("accept: %w", err):
+				default:
 				}
-				return
 			}
-			log.Printf("client %s connected generation=%d", conn.RemoteAddr(), conn.Generation())
-			go pumpClientToTun(conn, dev, routes)
+			return
 		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				st := srv.Stats()
-				log.Printf("stats: sessions=%d pending=%d decoys=%d frame_lens=%s",
-					st.Established, st.Pending, st.Decoys, formatFrameLens(st.FrameLens))
-			}
+		log.Printf("client %s connected generation=%d", conn.RemoteAddr(), conn.Generation())
+		if echo {
+			go pumpEcho(conn)
+			continue
 		}
-	}()
+		go pumpClientToTun(conn, tun.dev, tun.routes)
+	}
+}
 
+func statsLoop(ctx context.Context, srv *core.Server) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			st := srv.Stats()
+			log.Printf("stats: sessions=%d pending=%d decoys=%d frame_lens=%s",
+				st.Established, st.Pending, st.Decoys, formatFrameLens(st.FrameLens))
+		}
+	}
+}
+
+func waitRun(ctx context.Context, fatalCh <-chan error) error {
 	select {
 	case err := <-fatalCh:
 		if ctx.Err() != nil {
@@ -181,6 +214,24 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig) error {
 	case <-ctx.Done():
 		log.Println("shutting down")
 		return nil
+	}
+}
+
+func pumpEcho(conn *core.Conn) {
+	defer conn.Close()
+	if ip := conn.AssignedIP(); ip != "" {
+		log.Printf("client %s assigned TUN address %s (echo)", conn.RemoteAddr(), ip)
+	}
+	for {
+		pkt, err := conn.ReceivePacket()
+		if err != nil {
+			log.Printf("client %s disconnected: %v", conn.RemoteAddr(), err)
+			return
+		}
+		if err := conn.SendPacket(pkt); err != nil {
+			log.Printf("echo to %s: %v", conn.RemoteAddr(), err)
+			return
+		}
 	}
 }
 
