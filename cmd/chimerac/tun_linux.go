@@ -54,7 +54,9 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 			log.Printf("default-route takeover failed (tunnel still up): %v", err)
 		} else {
 			log.Printf("default route taken over via %s (server /32 exception for %s)", dev.Name(), cfg.ServerAddr)
+			dns := pushTUNDNS(dev.Name())
 			defer func() {
+				dns.revert()
 				if err := routes.release(); err != nil {
 					log.Printf("release routes: %v", err)
 				}
