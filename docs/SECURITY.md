@@ -31,7 +31,7 @@
    写失败时退回内存。`replay_path: ""` 关闭持久化。
 4. **丢包恢复**：ACK/SKIP 推进窗口（跳过语义，不重传）；上层协议自带可靠性。
 5. **密码学**：AES-GCM 与 ChaCha20-Poly1305 均已接入；基因组默认只抽 AES 三档。
-6. **平台**：Windows / Linux 路由接管已实现待真机验收；移动端已接 protect/排除路由，未真机审计；
+6. **平台**：Windows / Linux 路由接管已实现待真机验收；Android 已接 `protect(fd)` 与 Always-on 重启回退到本地配置，未真机审计；
    配置含 PSK 明文落盘（建议 `chmod 0600`；Windows 用 0600，后续可 DPAPI）。
    `bash scripts/selftest.sh` 覆盖本机 userspace 数据面，不替代真机路由验收。
 7. **DoS**：pending 上限 1024、单地址 1s 限速、每会话令牌桶、`max_sessions` 默认 256。

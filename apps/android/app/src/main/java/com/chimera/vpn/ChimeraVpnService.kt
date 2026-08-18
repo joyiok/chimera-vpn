@@ -72,7 +72,7 @@ class ChimeraVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        val config = intent?.let { parseConfig(it) } ?: ClientPrefs.load(this)
+        val config = configFrom(intent)
         if (config == null || config.serverAddr.isBlank() || config.seedHex.isBlank() || config.pskHex.isBlank() || config.tunIp.isBlank()) {
             postStatus("连接参数不完整")
             stopSelf()
@@ -95,6 +95,13 @@ class ChimeraVpnService : VpnService() {
         isRunning = false
         postLog("ChimeraVpnService 已销毁")
         super.onDestroy()
+    }
+
+    override fun onRevoke() {
+        postLog("系统撤销了 VPN 授权")
+        stopVpn()
+        stopSelf()
+        super.onRevoke()
     }
 
     private fun startForegroundCompat() {
@@ -181,6 +188,9 @@ class ChimeraVpnService : VpnService() {
 
             postStatus(getString(R.string.status_connected))
             postLog("Go 核心已启动，handle=$handle，本地地址 $tunAddrAssigned/24${if (assigned != null) "（服务器分配）" else "（手动配置）"}")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                postLog("always-on=${isAlwaysOn} lockdown=${isLockdownEnabled}")
+            }
 
             startPumps()
             launchWatchdog()
@@ -209,6 +219,7 @@ class ChimeraVpnService : VpnService() {
         try {
             builder.addAddress("fd99::2", 64)
             builder.addRoute("::", 0)
+            builder.addDnsServer("2606:4700:4700::1111")
         } catch (e: Exception) {
             postLog("IPv6 默认路由未安装：${e.message}")
         }
@@ -422,6 +433,16 @@ class ChimeraVpnService : VpnService() {
         }
         postLog("已 protect UDP fd=$fd，隧道套接字绕过 TUN")
         return true
+    }
+
+    private fun configFrom(intent: Intent?): VpnConfig? {
+        if (intent != null && intent.action != ACTION_DISCONNECT && intent.action != ACTION_RECONNECT) {
+            val fromIntent = parseConfig(intent)
+            if (fromIntent.serverAddr.isNotBlank() && fromIntent.seedHex.isNotBlank() && fromIntent.pskHex.isNotBlank()) {
+                return fromIntent
+            }
+        }
+        return ClientPrefs.load(this)
     }
 
     private fun parseConfig(intent: Intent): VpnConfig {

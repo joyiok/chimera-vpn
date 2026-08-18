@@ -41,6 +41,7 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 3. 验证 `GoBind.start` -> `socketFD` + `VpnService.protect` -> `assignedIP` -> TUN。
 4. 入站静默 90s 或 Receive 失败会重连 Go 核心（新会话先 `protect`，尽量不拆 TUN）。
 5. 已知需检查：前台服务类型在 Android 14+ 的厂商适配；IPv6 `::/0` 与 DNS 是否真正生效。
+   Always-on：系统用空 Intent 拉起时回退到本地保存的连接参数；`onRevoke` 会拆隧道。
 
 ## 5. ~~探测诱饵（anti-probe decoy）~~（已完成）
 

@@ -116,6 +116,7 @@ func runUserspace(ctx context.Context, srv *core.Server) error {
 	fatalCh := make(chan error, 1)
 	go acceptLoop(ctx, srv, fatalCh, nil, true)
 	go statsLoop(ctx, srv)
+	go watchUSR1(ctx, func() { dumpStats(srv, nil) })
 	return waitRun(ctx, fatalCh)
 }
 
@@ -160,6 +161,7 @@ func runTUN(ctx context.Context, srv *core.Server, tc tunConfig) error {
 
 	go acceptLoop(ctx, srv, fatalCh, &tunAccept{dev: dev, routes: routes}, false)
 	go statsLoop(ctx, srv)
+	go watchUSR1(ctx, func() { dumpStats(srv, routes) })
 	return waitRun(ctx, fatalCh)
 }
 
@@ -197,10 +199,20 @@ func statsLoop(ctx context.Context, srv *core.Server) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			st := srv.Stats()
-			log.Printf("stats: sessions=%d pending=%d decoys=%d frame_lens=%s",
-				st.Established, st.Pending, st.Decoys, formatFrameLens(st.FrameLens))
+			dumpStats(srv, nil)
 		}
+	}
+}
+
+func dumpStats(srv *core.Server, routes *clientRoute) {
+	st := srv.Stats()
+	log.Printf("stats: sessions=%d pending=%d decoys=%d frame_lens=%s",
+		st.Established, st.Pending, st.Decoys, formatFrameLens(st.FrameLens))
+	if routes == nil {
+		return
+	}
+	for _, s := range routes.snapshot() {
+		log.Print(formatSessionSnap(s))
 	}
 }
 

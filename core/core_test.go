@@ -139,3 +139,14 @@ func TestConfigValidation(t *testing.T) {
 		t.Fatal("empty server accepted")
 	}
 }
+
+func TestNilConnAccessors(t *testing.T) {
+	var c *Conn
+	if c.RemoteAddr() != nil || c.IdleFor() != 0 {
+		t.Fatal("nil Conn")
+	}
+	empty := &Conn{}
+	if empty.RemoteAddr() != nil || empty.IdleFor() != 0 {
+		t.Fatal("empty Conn")
+	}
+}

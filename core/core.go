@@ -504,7 +504,20 @@ func (c *Conn) Close() error {
 }
 
 // RemoteAddr returns the client UDP endpoint.
-func (c *Conn) RemoteAddr() net.Addr { return c.t.RemoteAddr() }
+func (c *Conn) RemoteAddr() net.Addr {
+	if c == nil || c.t == nil {
+		return nil
+	}
+	return c.t.RemoteAddr()
+}
+
+// IdleFor is inbound silence on this session (own keepalives do not count).
+func (c *Conn) IdleFor() time.Duration {
+	if c == nil || c.t == nil {
+		return 0
+	}
+	return c.t.IdleFor()
+}
 
 // Sum256 is a small helper for shell tools that derive seeds/PSKs.
 func Sum256(b []byte) []byte {

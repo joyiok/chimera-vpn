@@ -20,6 +20,7 @@ func main() {
 	timeout := flag.Duration("timeout", 12*time.Second, "handshake / probe deadline")
 	tunName := flag.String("tun", "", "override TUN interface name (default chimerac0)")
 	lostAfter := flag.Duration("lost-after", defaultLinkLostAfter, "reconnect after this much inbound silence; 0 disables idle reconnect")
+	statsEvery := flag.Duration("stats-interval", 30*time.Second, "log TUN byte counters this often; 0 disables")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -54,7 +55,7 @@ func main() {
 		return
 	}
 
-	if err := runVPN(cfg, vpnOptions{takeRoute: *takeRoute, lostAfter: *lostAfter}); err != nil {
+	if err := runVPN(cfg, vpnOptions{takeRoute: *takeRoute, lostAfter: *lostAfter, statsEvery: *statsEvery}); err != nil {
 		fatal(err)
 	}
 }

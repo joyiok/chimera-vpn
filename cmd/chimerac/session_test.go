@@ -17,6 +17,28 @@ func TestNextBackoff(t *testing.T) {
 	}
 }
 
+func TestFormatBytes(t *testing.T) {
+	cases := map[uint64]string{
+		0:                      "0 B",
+		512:                    "512 B",
+		1536:                   "1.5 KB",
+		2 * 1024 * 1024:        "2.00 MB",
+		3 * 1024 * 1024 * 1024: "3.00 GB",
+	}
+	for n, want := range cases {
+		if got := formatBytes(n); got != want {
+			t.Fatalf("%d: got %q want %q", n, got, want)
+		}
+	}
+}
+
+func TestFormatLinkStats(t *testing.T) {
+	got := formatLinkStats("10.99.0.2", 90*time.Second, 2048, 4096)
+	if got != "link assigned=10.99.0.2 idle=1m30s sent=2.0 KB recv=4.0 KB" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestWatchdogTick(t *testing.T) {
 	if got := watchdogTick(90 * time.Second); got != 5*time.Second {
 		t.Fatalf("90s: %s", got)

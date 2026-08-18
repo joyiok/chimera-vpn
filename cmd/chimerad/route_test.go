@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"testing"
+	"time"
 
 	"chimera/core"
 )
@@ -36,5 +37,24 @@ func TestClientRouteDisplace(t *testing.T) {
 	r.remove(b)
 	if r.lookup("10.99.0.2") != nil {
 		t.Fatal("remove left mapping")
+	}
+}
+
+func TestClientRouteSnapshotSorted(t *testing.T) {
+	r := newClientRoute()
+	a := &core.Conn{}
+	b := &core.Conn{}
+	r.register(a, "10.99.0.3")
+	r.register(b, "10.99.0.2")
+	got := r.snapshot()
+	if len(got) != 2 || got[0].IP != "10.99.0.2" || got[1].IP != "10.99.0.3" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestFormatSessionSnap(t *testing.T) {
+	got := formatSessionSnap(sessionSnap{IP: "10.99.0.2", Remote: "1.2.3.4:9", Generation: 2, Idle: time.Second})
+	if got != "client 1.2.3.4:9 tun=10.99.0.2 gen=2 idle=1s" {
+		t.Fatalf("got %q", got)
 	}
 }

@@ -12,8 +12,9 @@ import (
 const defaultLinkLostAfter = 90 * time.Second
 
 type vpnOptions struct {
-	takeRoute bool
-	lostAfter time.Duration
+	takeRoute  bool
+	lostAfter  time.Duration
+	statsEvery time.Duration
 }
 
 func clientCoreConfig(cfg clientConfig) core.Config {
@@ -60,6 +61,32 @@ func nextBackoff(d time.Duration) time.Duration {
 		return 30 * time.Second
 	}
 	return d
+}
+
+func formatBytes(n uint64) string {
+	const (
+		kb = 1024
+		mb = 1024 * 1024
+		gb = 1024 * 1024 * 1024
+	)
+	switch {
+	case n < kb:
+		return fmt.Sprintf("%d B", n)
+	case n < mb:
+		return fmt.Sprintf("%.1f KB", float64(n)/kb)
+	case n < gb:
+		return fmt.Sprintf("%.2f MB", float64(n)/mb)
+	default:
+		return fmt.Sprintf("%.2f GB", float64(n)/gb)
+	}
+}
+
+func formatLinkStats(assigned string, idle time.Duration, sent, recv uint64) string {
+	if assigned == "" {
+		assigned = "?"
+	}
+	return fmt.Sprintf("link assigned=%s idle=%s sent=%s recv=%s",
+		assigned, idle.Truncate(time.Second), formatBytes(sent), formatBytes(recv))
 }
 
 func watchdogTick(lostAfter time.Duration) time.Duration {

@@ -49,6 +49,9 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 
 	var routes *linuxRoutes
 	if takeRoute {
+		if err := configureClientTUN6(dev.Name(), clientTUN6); err != nil {
+			log.Printf("IPv6 TUN address skipped: %v", err)
+		}
 		routes, err = installDefaultRoutes(dev.Name(), assigned, cfg.ServerAddr)
 		if err != nil {
 			log.Printf("default-route takeover failed (tunnel still up): %v", err)
@@ -66,6 +69,35 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 
 	var current atomic.Pointer[core.Client]
 	current.Store(client)
+	var assignedStore atomic.Value
+	assignedStore.Store(assigned)
+
+	logStats := func() {
+		ip, _ := assignedStore.Load().(string)
+		c := current.Load()
+		if c == nil {
+			log.Printf("link assigned=%s (no session)", ip)
+			return
+		}
+		sent, recv := c.Bytes()
+		log.Print(formatLinkStats(ip, c.IdleFor(), sent, recv))
+	}
+	if opt.statsEvery > 0 {
+		go func() {
+			ticker := time.NewTicker(opt.statsEvery)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-sigCtx.Done():
+					return
+				case <-ticker.C:
+					logStats()
+				}
+			}
+		}()
+	}
+	go watchUSR1(sigCtx, logStats)
+
 	go pumpTunToNet(dev, func() *core.Client { return current.Load() })
 
 	backoff := time.Duration(0)
@@ -122,6 +154,7 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 				log.Printf("TUN address %s -> %s", assigned, ip)
 			}
 			assigned = ip
+			assignedStore.Store(ip)
 		}
 		log.Printf("reconnected generation=%d assigned=%s", next.Generation(), ip)
 		current.Store(next)
@@ -190,6 +223,38 @@ func waitBackoff(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+const clientTUN6 = "fd99::2/64"
+
+func configureClientTUN6(name, address string) error {
+	if name == "" || address == "" {
+		return nil
+	}
+	if out, err := exec.Command("ip", "-6", "addr", "add", address, "dev", name).CombinedOutput(); err != nil {
+		s := strings.ToLower(string(out))
+		if !strings.Contains(s, "file exists") {
+			return fmt.Errorf("ip -6 addr add: %v: %s", err, out)
+		}
+	}
+	return nil
+}
+
+func watchUSR1(ctx context.Context, dump func()) {
+	if dump == nil {
+		return
+	}
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGUSR1)
+	defer signal.Stop(ch)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			dump()
+		}
 	}
 }
 

@@ -93,7 +93,7 @@ sudo ./dist/chimerac -config ./local/client.json -take-route
    `ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。
 2. 允许未知来源后 sideload `app-debug.apk`。这是 debug 签名，不是 Play 发布包。
 3. 填入与服务器相同的 seed / generation / PSK / `host:port`。
-4. **尚未真机验收**；`VpnService.protect(fd)` 与入站静默重连已接进源码。
+4. **尚未真机验收**；`VpnService.protect(fd)`、Always-on 杀进程后从本地配置拉起、入站静默重连已接进源码。设置 → 网络和互联网 → VPN → Chimera → 始终开启。
 
 本机构建：`apps/android/build-android-core.sh` 后 Android Studio 或 `gradle assembleDebug`。
 

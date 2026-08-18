@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net"
+	"sort"
 	"sync"
+	"time"
 
 	"chimera/core"
 )
@@ -48,6 +51,53 @@ func (r *clientRoute) remove(conn *core.Conn) {
 	if ip != "" {
 		delete(r.byIP, ip)
 	}
+}
+
+func (r *clientRoute) snapshot() []sessionSnap {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]sessionSnap, 0, len(r.byConn))
+	for conn, ip := range r.byConn {
+		if conn == nil {
+			continue
+		}
+		remote := ""
+		if addr := conn.RemoteAddr(); addr != nil {
+			remote = addr.String()
+		}
+		out = append(out, sessionSnap{
+			IP:         ip,
+			Remote:     remote,
+			Idle:       conn.IdleFor(),
+			Generation: conn.Generation(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IP != out[j].IP {
+			return out[i].IP < out[j].IP
+		}
+		return out[i].Remote < out[j].Remote
+	})
+	return out
+}
+
+func formatSessionSnap(s sessionSnap) string {
+	ip := s.IP
+	if ip == "" {
+		ip = "-"
+	}
+	remote := s.Remote
+	if remote == "" {
+		remote = "-"
+	}
+	return fmt.Sprintf("client %s tun=%s gen=%d idle=%s", remote, ip, s.Generation, s.Idle.Truncate(time.Second))
+}
+
+type sessionSnap struct {
+	IP         string
+	Remote     string
+	Idle       time.Duration
+	Generation uint64
 }
 
 // packetIP returns the source or destination IP of a raw IPv4/IPv6 packet.

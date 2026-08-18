@@ -82,7 +82,9 @@ sudo ./dist/chimerac -config client.json -take-route
 ```
 
 `-check` 对 `-no-tun` 服务端得到 `probe=echo`，对真实 TUN 服务端得到 `probe=icmp-reply`。
-`-take-route` 安装 `0.0.0.0/1` + `128.0.0.0/1` 经 TUN，服务器 IPv4 `/32` 走 `ip route get` 选出的物理网卡；回环地址拒绝接管。IPv6 半默认路由尽力安装，防 IPv6 泄漏。接管成功后尽力执行 `resolvectl dns <tun> 1.1.1.1 8.8.8.8` 与 `domain ~.`，退出时 `resolvectl revert`。入站静默超过 `-lost-after`（默认 90s）自动重握手；自己发出的 keepalive 不再被当成对端还活着。
+`-take-route` 安装 `0.0.0.0/1` + `128.0.0.0/1` 经 TUN，服务器 IPv4 `/32` 走 `ip route get` 选出的物理网卡；回环地址拒绝接管。接管前尽力给 TUN 加上 `fd99::2/64`，再装 IPv6 半默认路由防泄漏。接管成功后尽力执行 `resolvectl dns <tun> 1.1.1.1 8.8.8.8` 与 `domain ~.`，退出时 `resolvectl revert`。入站静默超过 `-lost-after`（默认 90s）自动重握手；自己发出的 keepalive 不再被当成对端还活着。`-stats-interval`（默认 30s）打印 TUN 字节计数；`kill -USR1 <pid>` 立即打一条。
+
+服务端 `kill -USR1 <chimerad>` 会打印当前会话（远端、TUN 地址、generation、空闲）。
 
 配对配置：`go run ./cmd/chimera-init -dir ./local -server host:4789`。
 
