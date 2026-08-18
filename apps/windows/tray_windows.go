@@ -105,7 +105,7 @@ var (
 	trayApp     *ChimeraApp
 	trayHWND    windows.Handle
 	trayNID     notifyIconData
-	trayWndProc = syscall.NewCallback(trayWndProc)
+	trayWndProc = syscall.NewCallback(handleTrayWndProc)
 )
 
 func startTray(a *ChimeraApp) {
@@ -171,7 +171,7 @@ func runTray() {
 	procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&trayNID)))
 }
 
-func trayWndProc(hwnd windows.Handle, msg uint32, wParam, lParam uintptr) uintptr {
+func handleTrayWndProc(hwnd windows.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case wmTray:
 		switch lParam {
