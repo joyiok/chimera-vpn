@@ -15,7 +15,6 @@ CHIMERA 方案的第一步：**不模仿任何已知协议，而是从一颗 256
 - **Linux 命令行客户端**：`cmd/chimerac`（`-check` 探测 / TUN VPN + 可选默认路由接管）
 - **Windows 图形客户端**：`apps/windows`（Wails + Wintun 数据面 + 默认路由接管）
 - **Android 客户端**：`apps/android`（Kotlin VpnService + gomobile AAR）
-- **iOS 客户端**：`apps/ios`（Swift NEPacketTunnelProvider + gomobile XCFramework）
 - **共享内核**：`core/`（所有平台调用同一个 Go 核心）、`bind/`（gomobile 入口）
 - **协议编译器**：`internal/{drbg,genome,compiler}`、UDP 传输 `internal/tunnel`
 
@@ -122,14 +121,14 @@ app record s2c  : "payload from the other direction" (round trip OK)
 这**不是**高风险环境下的完整抗审查系统，但数据面与守护进程已按自建 VPN 生产运维收紧：
 
 - 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、多客户端复用、地址自动分配、Linux TUN 桥接、Linux CLI 客户端（探测 + TUN）、Windows 路由接管、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形、发送时序抖动、服务端 generation 窗口、chimerad 单会话故障隔离、握手可打印封面（gfw.report FEP Ex2/Ex4）、server-first 认证 knock、握手首包重放表
-- 未实现：真机 Android/iOS 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、完整流量变形
+- 未实现：真机 Android 验收、车道 B/C（CDN 广播 / 真实应用寄生）、端口跳跃、完整流量变形
 - `EstimatedEntropyBits` 是生成器自记账的近似值，不是安全证明
 
 ---
 
 ## 下一步（按建议顺序）
 
-1. **真机联调**：Android `protect(fd)` + VpnService；iOS excludedRoutes + NEPacketTunnelProvider
+1. **真机联调**：Android `protect(fd)` + VpnService
 2. **车道 B**：密文分片发布到 CDN/直播载体，客户端以拟人行为拉取
 3. **对抗评估**：包长分布、时序、分类器误伤率测量（含 gfw.report 启发式在真实网络上的对照）
 
@@ -152,7 +151,6 @@ internal/compiler/    编解码、握手状态机、会话
 | Linux CLI | `cmd/chimerac` | `-check` 探测；TUN + 半默认路由接管（IPv6 `::/1`+`8000::/1` 尽力） |
 | Windows GUI | `apps/windows` | Wails GUI + Wintun 包泵 + 默认路由接管 |
 | Android | `apps/android` | VpnService + gomobile AAR；`protect(fd)` 防自环 |
-| iOS | `apps/ios` | NEPacketTunnelProvider + XCFramework；服务器 `/32` 排除路由 |
 
 ## 运行 Linux 服务端
 
@@ -173,7 +171,7 @@ sudo systemctl start chimerad
 journalctl -u chimerad -f
 ```
 
-**多客户端与自动分配**：服务端在 `client_cidr`（如 `10.99.0.0/24`）内自动给每个客户端分配唯一 TUN 地址（`.1` 保留给网关，`.2` 起分配，释放后复用）。握手完成后服务器立即下发加密控制包，Android/iOS 先取地址再建虚拟网卡；界面上的“本机 TUN 地址”成为服务端未开启分配时的回退项。
+**多客户端与自动分配**：服务端在 `client_cidr`（如 `10.99.0.0/24`）内自动给每个客户端分配唯一 TUN 地址（`.1` 保留给网关，`.2` 起分配，释放后复用）。握手完成后服务器立即下发加密控制包，Android 先取地址再建虚拟网卡；界面上的“本机 TUN 地址”成为服务端未开启分配时的回退项。
 
 ## 移动端构建
 
@@ -182,17 +180,13 @@ GitHub Actions 会上传：
 - `Chimera-linux-amd64` — `ubuntu-latest`，`chimerad` + `chimerac` + `chimera-init`
 - `ChimeraClient-windows-amd64` — `windows-latest`，Wails GUI + `wintun.dll`
 - `ChimeraClient-android-debug` — `ubuntu-latest`，gomobile AAR + `assembleDebug`
-- `ChimeraBind-ios-xcframework` — `macos-latest`，gomobile XCFramework（不是已签名 IPA）
 
 ```bash
 # Android：生成 app/libs/bind.aar（需要 ANDROID_HOME + NDK）
 ./build/build-mobile-core.sh   # 或 apps/android/build-android-core.sh
-
-# iOS：在 macOS 上生成 ChimeraBind.xcframework
-./build/build-mobile-core.sh   # 或 apps/ios/build-ios-core.sh
 ```
 
-`bind` 包只暴露四个函数：`Start / Stop / Send / Receive`，平台层负责把系统 TUN/NetworkExtension 的数据流与 Go 核心对接。
+`bind` 包只暴露四个函数：`Start / Stop / Send / Receive`，平台层负责把系统 TUN 的数据流与 Go 核心对接。
 
 ## 目录
 
@@ -210,6 +204,5 @@ internal/tunnel/      UDP 握手与 packet tunnel
 internal/tun/         Linux TUN 抽象
 apps/windows/         Windows Wails GUI
 apps/android/         Android VpnService 客户端
-apps/ios/             iOS NetworkExtension 客户端
 configs/ deploy/ build/ scripts/
 ```

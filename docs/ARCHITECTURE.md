@@ -23,7 +23,6 @@ chimera/                     Go module `chimera`，go 1.24
 │   ├── core_bridge_transport.go  真实 core 调用（build tag with_transport）
 │   └── internal/bridge/     Wintun 数据面（Windows）/ stub（其他平台）
 ├── apps/android/            Android Studio 工程（Kotlin + VpnService）
-├── apps/ios/                Xcode 工程（Swift + NetworkExtension）
 ├── configs/ deploy/ build/ scripts/
 └── docs/
 ```
@@ -32,7 +31,7 @@ chimera/                     Go module `chimera`，go 1.24
 
 ```text
 apps/windows ──replace──▶ 根模块 chimera/core
-apps/android/iOS ──gomobile──▶ chimera/bind ──▶ chimera/core
+apps/android ──gomobile──▶ chimera/bind ──▶ chimera/core
 cmd/chimerad + cmd/chimerac ──▶ chimera/core ──▶ internal/tunnel ──▶ internal/compiler ──▶ internal/genome
 ```
 
@@ -40,7 +39,7 @@ cmd/chimerad + cmd/chimerac ──▶ chimera/core ──▶ internal/tunnel ─
 - `internal/genome` 只依赖 `internal/drbg`，不依赖网络。
 - `internal/compiler` 不知道 UDP/TCP，只处理“一帧字节”。
 - `internal/tunnel` 只处理握手与包转发，不知道 IP 包内容。
-- 平台壳（VpnService / NEPacketTunnelProvider / Wintun）只负责系统 TUN 与 `Send/Receive` 字节搬运。
+- 平台壳（VpnService / Wintun）只负责系统 TUN 与 `Send/Receive` 字节搬运。
 
 ## 数据流（VPN 模式）
 
@@ -110,7 +109,7 @@ func BytesSent(handle int64) (int64, error)     // TUN 上行 IP 字节
 func BytesRecv(handle int64) (int64, error)     // TUN 下行 IP 字节
 ```
 
-平台时序（Android/iOS 已按此实现）：
+平台时序（Android 已按此实现）：
 
 ```text
 Start() -> SocketFD()+protect [Android] -> AssignedIP() -> 用分配地址创建 TUN -> 启动两条泵

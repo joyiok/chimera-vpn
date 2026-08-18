@@ -429,7 +429,7 @@ func (t *PacketTunnel) ReceivePacket() ([]byte, error) {
 }
 
 // WaitControl blocks until the peer sends a control payload. It reads the
-// socket itself because callers (Android/iOS) wait for the assigned address
+// socket itself because callers (Android) wait for the assigned address
 // before starting their packet pumps. Data packets seen while waiting are
 // buffered for ReceivePacket.
 func (t *PacketTunnel) WaitControl(ctx context.Context) ([]byte, error) {

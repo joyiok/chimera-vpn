@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestExportedAPI is the gomobile contract Android/iOS shells compile
+// TestExportedAPI is the gomobile contract the Android shell compiles
 // against. CI used to shell out to gobind, which prints the Java stubs
 // and then exits 1 looking for golang.org/x/mobile/bind inside this
 // module. This test pins the Go surface without that extra toolchain.

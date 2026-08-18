@@ -1,6 +1,6 @@
-// Package core is the cross-platform CHIMERA client/server API. Windows,
-// Android and iOS shells call into this package (or into bind, which wraps
-// it for gomobile).
+// Package core is the cross-platform CHIMERA client/server API. Windows and
+// Android shells call into this package (or into bind, which wraps it for
+// gomobile).
 package core
 
 import (

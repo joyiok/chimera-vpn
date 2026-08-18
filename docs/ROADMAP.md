@@ -23,8 +23,7 @@ Linux CLI（`cmd/chimerac -take-route`）使用同一套半默认路由语义，
 `.github/workflows/ci.yml`：根模块 fmt/vet/test-race/build、Windows 子模块双标签
 test/vet + amd64 交叉编译、**windows-latest 上 Wails GUI（`with_transport`）并上传
 `ChimeraClient.exe` + `wintun.dll`**、**ubuntu-latest 上 gomobile + Gradle debug APK**、
-**macos-latest 上 gomobile iOS XCFramework + 无签名 Simulator xcodebuild**、
-gobind Java 签名冒烟。iOS 已签名 IPA 仍需要仓库外的 Apple 证书，CI 不出。
+gobind Java 签名冒烟。
 
 ## 3. ~~长期丢包恢复（packet ACK）~~（已完成）
 
@@ -34,7 +33,7 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 （`PacketTunnel` / `ServerTunnel`），会话状态由 `sessMu` 串行化。
 可选后续：选择性重传（当前为跳过语义，依赖上层协议重传）。
 
-## 4. Android/iOS 真机联调（代码已接 protect / 排除路由，待真机验收）
+## 4. Android 真机联调（代码已接 protect，待真机验收）
 
 **Android**：
 1. `apps/android/build-android-core.sh` 生成 AAR。
@@ -42,12 +41,6 @@ ACK 连续位置；发送端未确认跨度达窗口 3/4 时发 SKIP 让对端�
 3. 验证 `GoBind.start` -> `socketFD` + `VpnService.protect` -> `assignedIP` -> TUN。
 4. 入站静默 90s 或 Receive 失败会重连 Go 核心（新会话先 `protect`，尽量不拆 TUN）。
 5. 已知需检查：前台服务类型在 Android 14+ 的厂商适配；IPv6 `::/0` 与 DNS 是否真正生效。
-
-**iOS**：
-1. macOS 上 `build-ios-core.sh` 生成 XCFramework 并链入两个 target。
-2. 配置 App Group + NetworkExtension entitlements。
-3. 验证 `PacketTunnelProvider` 中 `GoBind.assignedIP` 阻塞 10s 内返回；
-   IPv4 服务器地址已加 `/32` excludedRoutes；IdleMillis 看门狗会重连 Go 核心。
 
 ## 5. ~~探测诱饵（anti-probe decoy）~~（已完成）
 

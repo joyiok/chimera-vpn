@@ -97,17 +97,7 @@ sudo ./dist/chimerac -config ./local/client.json -take-route
 
 本机构建：`apps/android/build-android-core.sh` 后 Android Studio 或 `gradle assembleDebug`。
 
-## 6. iOS 核心（不是 IPA）
-
-1. GitHub Actions job `ios-xcframework`（`macos-latest`）下载 artifact
-   `ChimeraBind-ios-xcframework`。
-2. 用 Xcode 把 `ChimeraBind.xcframework` 链到 `ChimeraPacketTunnel`，配好 Team /
-   App Group / Network Extension 后真机运行。CI **不会**出已签名 IPA。
-3. **尚未真机验收**；服务器地址 `/32` excludedRoutes 与入站静默重连已接进源码。
-
-本机构建：macOS 上 `apps/ios/build-ios-core.sh`。
-
-## 7. 不要做的事
+## 6. 不要做的事
 
 - 不要把配置文件 chmod 成 0644 或提交到 git。
 - 不要只升级一端。

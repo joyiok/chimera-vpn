@@ -3,7 +3,7 @@
 > 仓库：https://github.com/joyiok/chimera-vpn
 > 分支：`main`（Public）
 > 状态：可编译、可测试的研究型原型；数据面与守护进程已按自建 VPN 收紧，**不是**已验证的抗 GFW 产品。
-> 睡醒后先 `bash scripts/selftest.sh`（不用 root），再按 [DEPLOY.md](DEPLOY.md) 跑服务端 + Linux `chimerac` / Windows / Android artifact（iOS 是 XCFramework，不是 IPA）。
+> 睡醒后先 `bash scripts/selftest.sh`（不用 root），再按 [DEPLOY.md](DEPLOY.md) 跑服务端 + Linux `chimerac` / Windows / Android artifact。
 
 ## 10 分钟快速了解
 
@@ -31,8 +31,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
         ├── cmd/chimerad        Linux 服务端（TUN + 地址池 + 路由）
         ├── cmd/chimerac        Linux 客户端（-check / TUN / 自动重连）
         ├── apps/windows        Windows Wails GUI + Wintun 数据面
-        ├── apps/android        Android VpnService 客户端
-        └── apps/ios            iOS NEPacketTunnelProvider 客户端
+        └── apps/android        Android VpnService 客户端
 ```
 
 ## 当前状态一页表
@@ -45,17 +44,17 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
 | Linux 服务端 | ✅ 代码完成 | 编译/静态检查；TUN 需 root 实机；`scripts/selftest.sh` 覆盖 -no-tun 握手+回显 |
 | Linux CLI 客户端 | ✅ 代码完成 | `chimerac -check` + selftest；TUN/默认路由需 root；入站静默 90s 自动重连 |
 | Windows GUI | ✅ 控制面 + 托盘 + 流量图 + 入口列表 | Linux 交叉编译；Wails 真机托盘/路由待验收 |
-| Android/iOS | ⚠️ CI 可出包 | protect / excludedRoutes / IdleMillis 重连已接；真机与 IPA 签名未做 |
+| Android | ⚠️ CI 可出 debug APK | protect / IdleMillis 重连已接；真机未验收 |
 | Windows 默认路由接管 | ✅ 代码完成 | 纯逻辑单测通过；`route print` 验收待真机 |
 | 长期丢包恢复 | ✅ 完成 | ACK/SKIP 控制载荷；`-race` 测试含丢卡恢复用例 |
-| CI | ✅ 完成 | 根模块 + **userspace selftest** + Linux CLI artifact + Windows 交叉编译 + **windows-latest Wails GUI** + **ubuntu Android debug APK** + **macos iOS XCFramework** + gobind |
+| CI | ✅ 完成 | 根模块 + **userspace selftest** + Linux CLI artifact + Windows 交叉编译 + **windows-latest Wails GUI** + **ubuntu Android debug APK** + gobind |
 | ChaCha20-Poly1305 | ✅ 完成 | `cipher` 配置强制覆盖；端到端 + 不匹配拒连测试 |
 | 握手重放防护 | ✅ 完成 | 流模式 64 序号位图，录制重放被拒 |
 | NAT keepalive / 空闲回收 / 限速 | ✅ 完成 | `keepalive_sec`/`idle_timeout_sec`/`rate_limit_kbps` 配置 |
 | 连接配额 | ✅ 完成 | `max_sessions`（chimerad 默认 256） |
 | 探测诱饵 | ✅ 完成 | 非法首包回 decoy 物种；限速+体积帽 |
 | 包长整形 | ✅ 完成 | 128/512/1024/1452 阶梯；无 pad 基因型跳过 |
-| Android/iOS 套接字绕过 TUN | ✅ 代码完成 | Android `protect(fd)`；iOS `/32` excludedRoutes；IdleMillis 重连；待真机 |
+| Android 套接字绕过 TUN | ✅ 代码完成 | `protect(fd)`；IdleMillis 重连；待真机 |
 | 时序抖动 | ✅ 完成 | 截断指数 IAT，上限 20ms；对齐 obfs4/CCS 2015 |
 | 服务端 generation 窗口 | ✅ 完成 | 并行接受 gen…gen+N；client-first 可轮换 |
 | chimerad 生产运维 | ✅ 完成 | 单客户端断开不杀进程；TUN 地址幂等；`-check-config`；systemd 硬化 |
@@ -74,7 +73,7 @@ core / bind          跨平台 Go API + gomobile 移动端绑定
    - `docs/PROTOCOL.md`（线上格式与密码学）
    - `docs/BUILD.md`（各平台构建）
    - `docs/ROADMAP.md`（下一步与实现提示）
-6. 从 ROADMAP 的 **任务 4：Android/iOS 真机联调** 或车道 B/C 开始；
+6. 从 ROADMAP 的 **任务 4：Android 真机联调** 或车道 B/C 开始；
    若在 Linux 旁，先 `chimerac -check` 再考虑 `-take-route`。
    若在 Windows 真机旁，先验收路由接管（`route print -4`）。
    生产部署：`chmod 0600` 配置、`chimerad -check-config`、`deploy/chimerad.service`；

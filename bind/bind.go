@@ -4,14 +4,10 @@
 //
 // gomobile bind -target=android -androidapi 26 -o bind.aar chimera/bind
 //
-// Build for iOS:
-//
-// gomobile bind -target=ios,iossimulator,macos -o ChimeraBind.xcframework chimera/bind
-//
 // The API is intentionally tiny: Start/AssignedIP/Stop/Send/Receive/SocketFD/IdleMillis/BytesSent/BytesRecv.
-// Mobile VpnService and NEPacketTunnelProvider shells poll Receive on a
-// worker thread and push outbound IP packets through Send. Android must
-// call SocketFD after Start and VpnService.protect(fd) before establish().
+// The Android VpnService shell polls Receive on a worker thread and pushes
+// outbound IP packets through Send. Android must call SocketFD after Start
+// and VpnService.protect(fd) before establish().
 package bind
 
 import (
