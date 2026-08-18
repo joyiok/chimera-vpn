@@ -3,23 +3,42 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CHIMERA Windows 客户端</title>
+    <title>CHIMERA</title>
   </head>
   <body>
     <div id="app">
       <header class="topbar">
         <div class="brand">
-          <div class="logo">C</div>
+          <div class="mark" aria-hidden="true"></div>
           <div>
             <h1>CHIMERA</h1>
-            <p>Windows 客户端 · 关闭窗口会留在托盘</p>
+            <p>关窗口留在托盘</p>
           </div>
         </div>
         <div class="top-actions">
           <div id="statusBadge" class="badge disconnected">未连接</div>
-          <button id="trayBtn" class="ghost" type="button">隐藏到托盘</button>
+          <button id="trayBtn" class="ghost" type="button">托盘</button>
         </div>
       </header>
+
+      <label class="invite">
+        <span>邀请链接</span>
+        <div class="invite-row">
+          <input
+            id="inviteInput"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="粘贴 chimera://v1/… 或整份 client.json"
+          />
+          <button id="importBtn" type="button">导入</button>
+          <button id="copyInviteBtn" class="ghost" type="button">复制</button>
+        </div>
+        <p class="hint">发给另一台设备即可，不必再填 Seed / PSK。链接就是密钥。</p>
+      </label>
+
+      <button id="connectBtn" class="connect" type="button">连接</button>
+      <button id="disconnectBtn" class="ghost disconnect" type="button">断开</button>
 
       <section class="stats" aria-label="流量">
         <div>
@@ -32,68 +51,56 @@
           <strong id="rxTotal">0 B</strong>
           <span id="rxRate" class="rate">0 B/s</span>
         </div>
-        <canvas id="spark" width="640" height="72" aria-hidden="true"></canvas>
+        <canvas id="spark" width="640" height="56" aria-hidden="true"></canvas>
       </section>
 
-      <main>
-        <section class="card">
-          <h2>连接配置</h2>
-
-          <label class="field">
-            <span>服务器地址</span>
-            <input id="serverAddr" type="text" placeholder="127.0.0.1:4789" autocomplete="off" />
-          </label>
-
-          <label class="field">
-            <span>入口名称（可选，保存到节点列表）</span>
-            <input id="serverName" type="text" placeholder="例如 vps-hk" autocomplete="off" />
-          </label>
-
-          <label class="field">
-            <span>Seed（协议种子）</span>
-            <div class="secret-row">
-              <input id="seedHex" type="password" placeholder="64 位十六进制" autocomplete="off" />
-              <button type="button" data-toggle="seedHex">显示</button>
-            </div>
-          </label>
-
-          <label class="field">
-            <span>Generation（协议世代）</span>
-            <input id="generation" type="number" min="0" step="1" value="0" />
-          </label>
-
-          <label class="field">
-            <span>PSK（预共享密钥）</span>
-            <div class="secret-row">
-              <input id="pskHex" type="password" placeholder="64 位十六进制" autocomplete="off" />
-              <button type="button" data-toggle="pskHex">显示</button>
-            </div>
-          </label>
-
-          <div class="actions">
-            <button id="connectBtn" class="primary">连接</button>
-            <button id="disconnectBtn" class="ghost">断开</button>
-            <button id="saveServerBtn" class="ghost">保存入口</button>
+      <details class="advanced">
+        <summary>手动填写</summary>
+        <label class="field">
+          <span>服务器</span>
+          <input id="serverAddr" type="text" placeholder="host:port" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>名称（可选）</span>
+          <input id="serverName" type="text" placeholder="家里的 VPS" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Seed</span>
+          <div class="secret-row">
+            <input id="seedHex" type="password" placeholder="64 位十六进制" autocomplete="off" />
+            <button type="button" data-toggle="seedHex">显示</button>
           </div>
-        </section>
-
-        <section class="card">
-          <h2>节点</h2>
-          <p class="muted">只保存 host:port，Seed/PSK 仍用上面这一套。</p>
-          <div id="serverList" class="server-list">
-            <div class="muted">还没有保存的入口。连上一次，或点「保存入口」。</div>
+        </label>
+        <label class="field">
+          <span>Generation</span>
+          <input id="generation" type="number" min="0" step="1" value="0" />
+        </label>
+        <label class="field">
+          <span>PSK</span>
+          <div class="secret-row">
+            <input id="pskHex" type="password" placeholder="64 位十六进制" autocomplete="off" />
+            <button type="button" data-toggle="pskHex">显示</button>
           </div>
-        </section>
+        </label>
+        <div class="actions">
+          <button id="saveServerBtn" class="ghost" type="button">保存入口</button>
+        </div>
+      </details>
 
-        <section class="card logs-card">
-          <h2>运行日志</h2>
-          <div id="logs" class="logs">
-            <div class="log muted">就绪。关窗口会进托盘，托盘右键可连接/断开/退出。</div>
-          </div>
-        </section>
-      </main>
+      <section class="panel">
+        <h2>入口</h2>
+        <p class="hint">只记 host:port。协议密钥跟邀请走。</p>
+        <div id="serverList" class="server-list">
+          <div class="muted">还没有保存的入口。</div>
+        </div>
+      </section>
 
-      <footer>CHIMERA · 托盘 + 流量 + 入口列表</footer>
+      <section class="panel logs-card">
+        <h2>日志</h2>
+        <div id="logs" class="logs">
+          <div class="log muted">粘贴邀请链接，或展开手动填写。</div>
+        </div>
+      </section>
     </div>
 
     <script type="module" src="/src/main.js"></script>

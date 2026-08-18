@@ -23,3 +23,10 @@ func runtimeQuit(ctx context.Context) {
 		runtime.Quit(ctx)
 	}
 }
+
+func runtimeClipboardSet(ctx context.Context, text string) error {
+	if ctx == nil {
+		return nil
+	}
+	return runtime.ClipboardSetText(ctx, text)
+}

@@ -9,10 +9,13 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"chimera/internal/invite"
 )
 
 func main() {
 	configPath := flag.String("config", "client.json", "client JSON config path")
+	inviteURL := flag.String("invite", "", "chimera://v1/… share URL (overrides seed/PSK/server in -config)")
 	check := flag.Bool("check", false, "handshake + assigned IP + ICMP probe; no TUN")
 	jsonOut := flag.Bool("json", false, "print -check result as JSON")
 	server := flag.String("server", "", "override config serverAddr (host:port)")
@@ -25,9 +28,19 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
-	cfg, err := loadClientConfig(*configPath)
+	cfg, err := loadClientConfigOrEmpty(*configPath, *inviteURL != "")
 	if err != nil {
 		fatal(err)
+	}
+	if *inviteURL != "" {
+		p, err := invite.Parse(*inviteURL)
+		if err != nil {
+			fatal(fmt.Errorf("invite: %w", err))
+		}
+		cfg.ServerAddr = p.Addr
+		cfg.SeedHex = p.SeedHex
+		cfg.PSKHex = p.PSKHex
+		cfg.Generation = p.Generation
 	}
 	if *server != "" {
 		cfg.ServerAddr = *server

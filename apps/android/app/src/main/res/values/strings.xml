@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Chimera VPN</string>
-    <string name="server_hint">服务器地址</string>
+    <string name="app_name">Chimera</string>
+    <string name="invite_hint">邀请链接</string>
+    <string name="invite_placeholder">chimera://v1/…</string>
+    <string name="import_invite">导入</string>
+    <string name="copy_invite">复制邀请</string>
+    <string name="invite_help">粘贴或点开链接即可，不必手填密钥。链接就是密码。</string>
+    <string name="advanced">手动填写</string>
+    <string name="server_hint">服务器</string>
     <string name="seed_hint">Seed（十六进制）</string>
     <string name="generation_hint">Generation</string>
     <string name="psk_hint">PSK（十六进制）</string>
-    <string name="tun_ip_hint">本机 TUN 地址（每台设备唯一）</string>
+    <string name="tun_ip_hint">本机 TUN 地址</string>
     <string name="connect">连接</string>
     <string name="disconnect">断开</string>
     <string name="status_idle">未连接</string>
@@ -17,10 +23,14 @@
     <string name="reconnect">重连</string>
     <string name="notification_running">VPN 正在运行</string>
     <string name="traffic_idle">↑ 0 B    ↓ 0 B</string>
-    <string name="nodes_label">节点</string>
+    <string name="nodes_label">入口</string>
     <string name="save_node">保存入口</string>
     <string name="tile_label">Chimera</string>
-    <string name="toast_fill_all">请填写服务器地址、Seed、Generation、PSK 和本机地址</string>
+    <string name="toast_fill_all">请填写服务器、Seed、Generation、PSK</string>
     <string name="toast_generation_invalid">Generation 必须是整数</string>
     <string name="toast_vpn_denied">未授予 VPN 权限</string>
+    <string name="toast_imported">已导入 %1$s</string>
+    <string name="toast_invite_bad">邀请链接无效</string>
+    <string name="toast_copied">邀请链接已复制，不要发到公开群</string>
+    <string name="toast_copy_need_fields">先导入或填好配置再复制</string>
 </resources>

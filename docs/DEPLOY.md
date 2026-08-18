@@ -75,13 +75,21 @@ sudo ./dist/chimerac -config ./local/client.json -take-route
 
 连通后 `ip route` 应看到半默认路由走 `chimerac0`，服务器 IP `/32` 走物理网卡。回环地址会拒绝接管，避免把本机测网关劫持掉。
 
+也可以不写 JSON，把 `chimera-init` 打印的 `invite=chimera://v1/…` 丢给客户端：
+
+```bash
+./chimerac -invite 'chimera://v1/…' -check
+```
+
+Windows / Android 粘贴同一条链接即可；Android 点开 `chimera://` 也会导入。链接里是 PSK，按密码保管。
+
 ## 4. Windows 客户端
 
 1. GitHub Actions 打开最新绿色 run，下载 artifact `ChimeraClient-windows-amd64`
    （`ChimeraClient.exe` + 官方签名 `wintun.dll`）。PR / `main` / `workflow_dispatch` 都会构建。
 2. 两个文件放同一目录，**管理员**运行 exe。
-3. 填入与服务器相同的 seed / generation / PSK / `host:port`。
-   字段示例见 `configs/client.example.json`（GUI 会写到 exe 旁 `chimera-config.json`，权限 0600）。
+3. 粘贴 `chimera://v1/…` 邀请链接（`chimera-init` 会打印），或手动填 seed / generation / PSK / `host:port`。
+   GUI 会写到 exe 旁 `chimera-config.json`，权限 0600。
 4. 未代码签名，SmartScreen 可能提示；见 `apps/windows/build/README.md`。
 5. 连通后 `route print -4` 应看到 `0.0.0.0/1` 与 `128.0.0.0/1` 走 Wintun，服务器 IP `/32` 走物理网卡。
 
@@ -92,7 +100,7 @@ sudo ./dist/chimerac -config ./local/client.json -take-route
 1. GitHub Actions job `android-apk`（`ubuntu-latest`）下载 artifact
    `ChimeraClient-android-debug`（`app-debug.apk` + `bind.aar`）。
 2. 允许未知来源后 sideload `app-debug.apk`。这是 debug 签名，不是 Play 发布包。
-3. 填入与服务器相同的 seed / generation / PSK / `host:port`。
+3. 粘贴或点开同一条 `chimera://` 邀请链接（也可手填 seed / generation / PSK / `host:port`）。
 4. **尚未真机验收**；`VpnService.protect(fd)`、Always-on 杀进程后从本地配置拉起、入站静默重连已接进源码。设置 → 网络和互联网 → VPN → Chimera → 始终开启。
 
 本机构建：`apps/android/build-android-core.sh` 后 Android Studio 或 `gradle assembleDebug`。

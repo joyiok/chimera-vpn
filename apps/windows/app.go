@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"chimera/internal/invite"
 )
 
 // DefaultServerAddr 是 SelectServerDefault 返回的默认服务器地址。
@@ -327,6 +329,41 @@ func upsertServer(list []savedServer, name, addr string) []savedServer {
 // SelectServerDefault 返回默认服务器地址常量。
 func (a *ChimeraApp) SelectServerDefault() string {
 	return DefaultServerAddr
+}
+
+// ParseInvite fills the form from a chimera:// URL or pasted client.json.
+// Never log the raw text; it contains the PSK.
+func (a *ChimeraApp) ParseInvite(text string) (map[string]any, error) {
+	p, err := invite.Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"serverAddr": p.Addr,
+		"seedHex":    p.SeedHex,
+		"pskHex":     p.PSKHex,
+		"generation": p.Generation,
+		"name":       p.Name,
+	}, nil
+}
+
+// CopyInvite encodes the current fields as a chimera://v1/ URL and copies it
+// to the clipboard when the Wails context is ready.
+func (a *ChimeraApp) CopyInvite(name, addr, seedHex, pskHex string, generation uint64) (string, error) {
+	link, err := invite.Format(invite.Profile{
+		Addr:       addr,
+		SeedHex:    seedHex,
+		PSKHex:     pskHex,
+		Generation: generation,
+		Name:       name,
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := runtimeClipboardSet(a.ctx, link); err != nil {
+		log.Printf("[ChimeraApp] clipboard: %v", err)
+	}
+	return link, nil
 }
 
 // setError 将状态置为 error 并记录最后一次错误。

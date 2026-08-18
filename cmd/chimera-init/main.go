@@ -1,6 +1,6 @@
 // Command chimera-init writes a matching server.json + client.json pair
-// with a fresh 256-bit seed and PSK. Secrets are never printed in full
-// unless -print-secrets is set.
+// plus a chimera://v1/ share URL. Hex dumps of seed/PSK still need
+// -print-secrets; the invite URL itself is the secret.
 package main
 
 import (
@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"chimera/internal/invite"
 )
 
 type initServer struct {
@@ -113,6 +115,15 @@ func main() {
 
 	fmt.Printf("wrote %s/server.json and %s/client.json (mode 0600)\n", *dir, *dir)
 	fmt.Printf("seed_fp=%s psk_fp=%s listen=%s client_dials=%s\n", fingerprint(seed), fingerprint(psk), listenAddr, clientAddr)
+	if link, err := invite.Format(invite.Profile{
+		Addr:       clientAddr,
+		SeedHex:    seedHex,
+		PSKHex:     pskHex,
+		Generation: 0,
+	}); err == nil {
+		fmt.Printf("invite=%s\n", link)
+		fmt.Println("share that URL with Windows/Android; it is the secret, treat it like a password")
+	}
 	if *printSecrets {
 		fmt.Printf("seed_hex=%s\npsk_hex=%s\n", seedHex, pskHex)
 	}

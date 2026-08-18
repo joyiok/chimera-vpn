@@ -59,6 +59,9 @@ const els = {
   disconnectBtn: $('disconnectBtn'),
   saveServerBtn: $('saveServerBtn'),
   trayBtn: $('trayBtn'),
+  inviteInput: $('inviteInput'),
+  importBtn: $('importBtn'),
+  copyInviteBtn: $('copyInviteBtn'),
   logs: $('logs'),
   serverList: $('serverList'),
   txTotal: $('txTotal'),
@@ -319,8 +322,72 @@ document.querySelectorAll('[data-toggle]').forEach((btn) => {
   })
 })
 
+function applyProfile(p) {
+  if (!p) return
+  els.serverAddr.value = p.serverAddr || p.ServerAddr || ''
+  els.seedHex.value = p.seedHex || p.SeedHex || ''
+  els.pskHex.value = p.pskHex || p.PSKHex || p.pskhex || ''
+  if (p.generation !== undefined && p.generation !== null) {
+    els.generation.value = p.generation
+  }
+  if (p.name) els.serverName.value = p.name
+}
+
+async function importInvite(text) {
+  const api = getAPI()
+  if (!api) {
+    log(`Wails 绑定不可用，无法导入（${describeGoBindings()}）。`, 'warn')
+    return
+  }
+  const raw = (text ?? els.inviteInput.value).trim()
+  if (!raw) {
+    log('先粘贴邀请链接或 client.json。', 'warn')
+    return
+  }
+  if (!api.ParseInvite) {
+    log('当前 exe 太旧，请换 v0.1.2 及以后的 Windows 包。', 'error')
+    return
+  }
+  try {
+    const p = await api.ParseInvite(raw)
+    applyProfile(p)
+    log(`已导入 ${els.serverAddr.value}，密钥未写入日志。`)
+  } catch (e) {
+    log(`导入失败：${e}`, 'error')
+  }
+}
+
+async function copyInvite() {
+  const api = getAPI()
+  if (!api?.CopyInvite) {
+    log('当前 exe 太旧，无法复制邀请链接。', 'warn')
+    return
+  }
+  const generation = Number.parseInt(els.generation.value || '0', 10)
+  try {
+    const link = await api.CopyInvite(
+      els.serverName.value.trim(),
+      els.serverAddr.value.trim(),
+      els.seedHex.value.trim(),
+      els.pskHex.value.trim(),
+      generation,
+    )
+    if (link) els.inviteInput.value = link
+    log('邀请链接已复制。它就是密钥，不要发到公开群。')
+  } catch (e) {
+    log(`复制失败：${e}`, 'error')
+  }
+}
 els.connectBtn.addEventListener('click', connect)
 els.disconnectBtn.addEventListener('click', disconnect)
+els.importBtn.addEventListener('click', () => importInvite())
+els.copyInviteBtn.addEventListener('click', copyInvite)
+els.inviteInput.addEventListener('paste', (ev) => {
+  const text = ev.clipboardData?.getData('text') || ''
+  if (text.includes('chimera://') || text.trim().startsWith('{')) {
+    setTimeout(() => importInvite(text), 0)
+  }
+})
 els.saveServerBtn.addEventListener('click', async () => {
   const api = getAPI()
   const addr = els.serverAddr.value.trim()
@@ -352,13 +419,6 @@ els.trayBtn.addEventListener('click', async () => {
   }
 
   await loadConfig(true)
-  if (!els.serverAddr.value) {
-    try {
-      els.serverAddr.value = await api.SelectServerDefault()
-    } catch {
-      /* keep empty */
-    }
-  }
 
   await refreshStatus()
   await refreshTraffic()

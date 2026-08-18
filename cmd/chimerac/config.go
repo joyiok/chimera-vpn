@@ -27,6 +27,18 @@ func defaultClientConfig() clientConfig {
 	}
 }
 
+func loadClientConfigOrEmpty(path string, inviteOK bool) (clientConfig, error) {
+	if inviteOK {
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return defaultClientConfig(), nil
+			}
+			return clientConfig{}, err
+		}
+	}
+	return loadClientConfig(path)
+}
+
 func loadClientConfig(path string) (clientConfig, error) {
 	cfg := defaultClientConfig()
 	raw, err := os.ReadFile(path)

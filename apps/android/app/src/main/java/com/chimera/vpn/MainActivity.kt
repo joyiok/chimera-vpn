@@ -2,15 +2,20 @@ package com.chimera.vpn
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.getSystemService
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -20,17 +25,22 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var inviteInput: TextInputEditText
     private lateinit var serverInput: TextInputEditText
     private lateinit var seedInput: TextInputEditText
     private lateinit var generationInput: TextInputEditText
     private lateinit var pskInput: TextInputEditText
     private lateinit var tunIpInput: TextInputEditText
     private lateinit var connectButton: MaterialButton
+    private lateinit var importButton: MaterialButton
+    private lateinit var copyInviteButton: MaterialButton
     private lateinit var saveNodeButton: MaterialButton
     private lateinit var statusText: TextView
     private lateinit var trafficText: TextView
     private lateinit var logText: TextView
     private lateinit var serverList: LinearLayout
+    private lateinit var advancedPanel: View
+    private lateinit var advancedToggle: TextView
 
     private var pendingConfig: ChimeraVpnService.VpnConfig? = null
 
@@ -49,17 +59,22 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        inviteInput = findViewById(R.id.inviteInput)
         serverInput = findViewById(R.id.serverInput)
         seedInput = findViewById(R.id.seedInput)
         generationInput = findViewById(R.id.generationInput)
         pskInput = findViewById(R.id.pskInput)
         tunIpInput = findViewById(R.id.tunIpInput)
         connectButton = findViewById(R.id.connectButton)
+        importButton = findViewById(R.id.importButton)
+        copyInviteButton = findViewById(R.id.copyInviteButton)
         saveNodeButton = findViewById(R.id.saveNodeButton)
         statusText = findViewById(R.id.statusText)
         trafficText = findViewById(R.id.trafficText)
         logText = findViewById(R.id.logText)
         serverList = findViewById(R.id.serverList)
+        advancedPanel = findViewById(R.id.advancedPanel)
+        advancedToggle = findViewById(R.id.advancedToggle)
         restoreForm()
         renderServers()
 
@@ -75,6 +90,14 @@ class MainActivity : AppCompatActivity() {
             } else {
                 connect()
             }
+        }
+        importButton.setOnClickListener {
+            importInvite(inviteInput.text?.toString().orEmpty())
+        }
+        copyInviteButton.setOnClickListener { copyInvite() }
+        advancedToggle.setOnClickListener {
+            val show = advancedPanel.visibility != View.VISIBLE
+            advancedPanel.visibility = if (show) View.VISIBLE else View.GONE
         }
         saveNodeButton.setOnClickListener {
             val addr = serverInput.text?.toString()?.trim().orEmpty()
@@ -105,6 +128,78 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        consumeInviteIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeInviteIntent(intent)
+    }
+
+    private fun consumeInviteIntent(intent: Intent?) {
+        if (intent == null) return
+        val raw = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.dataString
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+            else -> null
+        } ?: return
+        inviteInput.setText(raw)
+        importInvite(raw)
+    }
+
+    private fun importInvite(raw: String) {
+        val invite = try {
+            Invites.parse(raw)
+        } catch (_: Exception) {
+            Toast.makeText(this, R.string.toast_invite_bad, Toast.LENGTH_SHORT).show()
+            return
+        }
+        applyInvite(invite)
+        Toast.makeText(this, getString(R.string.toast_imported, invite.addr), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun applyInvite(invite: Invite) {
+        serverInput.setText(invite.addr)
+        seedInput.setText(invite.seedHex)
+        pskInput.setText(invite.pskHex)
+        generationInput.setText(invite.generation.toString())
+        val tun = tunIpInput.text?.toString()?.trim().orEmpty().ifBlank { "10.99.0.2" }
+        ClientPrefs.save(
+            this,
+            ChimeraVpnService.VpnConfig(
+                serverAddr = invite.addr,
+                seedHex = invite.seedHex,
+                generation = invite.generation,
+                pskHex = invite.pskHex,
+                tunIp = tun
+            )
+        )
+        if (invite.name.isNotEmpty()) {
+            ClientPrefs.saveServer(this, invite.name, invite.addr)
+        }
+        renderServers()
+    }
+
+    private fun copyInvite() {
+        val server = serverInput.text?.toString()?.trim().orEmpty()
+        val seed = seedInput.text?.toString()?.trim().orEmpty()
+        val psk = pskInput.text?.toString()?.trim().orEmpty()
+        val generation = generationInput.text?.toString()?.trim()?.toLongOrNull() ?: 0L
+        if (server.isEmpty() || seed.isEmpty() || psk.isEmpty()) {
+            Toast.makeText(this, R.string.toast_copy_need_fields, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val link = try {
+            Invites.format(Invite(server, seed, psk, generation))
+        } catch (_: Exception) {
+            Toast.makeText(this, R.string.toast_invite_bad, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val clip = getSystemService<ClipboardManager>()
+        clip?.setPrimaryClip(ClipData.newPlainText("chimera invite", link))
+        Toast.makeText(this, R.string.toast_copied, Toast.LENGTH_SHORT).show()
     }
 
     private fun connect() {
