@@ -155,7 +155,7 @@ build\dev.bat with_transport
 │  ┌───────────────────────────────────────┐  │
 │  │              WebView2                  │  │
 │  │   HTML/JS/CSS (Vite 构建产物)           │  │
-│  │   window.go.chimera.App.Start(...)     │  │
+│  │   window.go.main.ChimeraApp.Start(...) │  │
 │  └───────────────▲───────────────────────┘  │
 │                  │ Wails 绑定               │
 │  ┌───────────────┴───────────────────────┐  │
@@ -171,16 +171,17 @@ build\dev.bat with_transport
 
 ### 4.2 前端调用后端
 
-Wails v2 对 `package main` 的绑定默认暴露在 `window.go.main.App`。
-前端 `src/main.js` 里做了一个轻量别名，把 `window.go.main` 映射为
-`window.go.chimera`，因此后续统一按需求调用：
+Wails v2 按 **Go 结构体名** 注入绑定。后端是 `type ChimeraApp struct`、
+`package main`，所以运行时是 `window.go.main.ChimeraApp`，不是 `.App`。
+前端 `getAPI()` 会按 `ChimeraApp` / `App` 查找，避免 v0.1.0 那种界面正常却
+提示「Wails 绑定不可用」的情况。
 
 ```js
-await window.go.chimera.App.Start(seedHex, generation, pskHex, serverAddr)
-await window.go.chimera.App.Stop()
-const status = await window.go.chimera.App.Status()
-const cfg = await window.go.chimera.App.Config()
-const defaultServer = await window.go.chimera.App.SelectServerDefault()
+await window.go.main.ChimeraApp.Start(seedHex, generation, pskHex, serverAddr)
+await window.go.main.ChimeraApp.Stop()
+const status = await window.go.main.ChimeraApp.Status()
+const cfg = await window.go.main.ChimeraApp.Config()
+const defaultServer = await window.go.main.ChimeraApp.SelectServerDefault()
 ```
 
 ### 4.3 后端方法
@@ -246,8 +247,9 @@ client.Close() error
 这是 stub 的预期行为。请在核心合并后使用 `wails build -tags with_transport`。
 
 ### Q3：前端提示 `Wails 绑定不可用`
-请通过 `wails dev` 或 `wails build` 运行，不要直接双击 `frontend/dist/index.html`；
-直接打开静态 HTML 没有 Wails 注入的 `window.go`。
+先确认打开的是 `ChimeraClient.exe`（同目录要有 `wintun.dll`），不要用浏览器打开 HTML。
+v0.1.0 还会在 **exe 里** 报这句：前端只认 `window.go.main.App`，Wails 实际挂的是
+`ChimeraApp`。请用包含该修复的构建。日志里会打印实际注入的 `window.go` 键名。
 
 ### Q4：`go:embed` 报 `frontend/dist` 不存在
 仓库已包含占位的 `frontend/dist/index.html`。如果 Vite 清理了该目录，

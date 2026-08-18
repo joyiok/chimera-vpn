@@ -1,11 +1,41 @@
 import './style.css'
 
+function looksLikeApp(obj) {
+  return !!obj && typeof obj.Start === 'function' && typeof obj.Status === 'function'
+}
+
+// Wails v2 binds `type ChimeraApp struct` in package main as
+// window.go.main.ChimeraApp, not window.go.main.App. v0.1.0 only
+// looked for .App, so a real exe still logged "Wails 绑定不可用".
 function getAPI() {
-  if (!window.go) return null
-  if (!window.go.chimera && window.go.main) {
-    window.go.chimera = window.go.main
+  const go = window.go
+  if (!go) return null
+  const named = [
+    go.main?.ChimeraApp,
+    go.main?.App,
+    go.chimera?.ChimeraApp,
+    go.chimera?.App,
+  ]
+  for (const candidate of named) {
+    if (looksLikeApp(candidate)) return candidate
   }
-  return window.go.chimera?.App ?? null
+  for (const ns of Object.values(go)) {
+    if (!ns || typeof ns !== 'object') continue
+    for (const candidate of Object.values(ns)) {
+      if (looksLikeApp(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+function describeGoBindings() {
+  if (!window.go) return 'window.go 未注入（不要用浏览器打开 HTML）'
+  const parts = []
+  for (const [ns, val] of Object.entries(window.go)) {
+    const keys = val && typeof val === 'object' ? Object.keys(val).join(',') : typeof val
+    parts.push(`${ns}:{${keys}}`)
+  }
+  return parts.length ? `window.go ${parts.join(' ')}` : 'window.go 为空'
 }
 
 async function waitForAPI(timeoutMs = 5000) {
@@ -209,7 +239,7 @@ async function refreshServers() {
 async function connect() {
   const api = getAPI()
   if (!api) {
-    log('Wails 绑定不可用，请通过 wails dev / wails build 运行。', 'warn')
+    log(`Wails 绑定不可用，无法连接（${describeGoBindings()}）。`, 'warn')
     return
   }
 
@@ -294,7 +324,11 @@ els.disconnectBtn.addEventListener('click', disconnect)
 els.saveServerBtn.addEventListener('click', async () => {
   const api = getAPI()
   const addr = els.serverAddr.value.trim()
-  if (!api || !addr) {
+  if (!api) {
+    log(`Wails 绑定不可用，无法保存入口（${describeGoBindings()}）。`, 'warn')
+    return
+  }
+  if (!addr) {
     log('先填写服务器地址再保存入口。', 'warn')
     return
   }
@@ -312,7 +346,7 @@ els.trayBtn.addEventListener('click', async () => {
 ;(async function init() {
   const api = await waitForAPI()
   if (!api) {
-    log('Wails 绑定不可用：请使用 wails dev 或 wails build 运行本应用。', 'error')
+    log(`Wails 绑定不可用：${describeGoBindings()}。请运行发布包里的 ChimeraClient.exe。`, 'error')
     updateBadge('error', 'Wails binding missing')
     return
   }
