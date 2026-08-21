@@ -7,6 +7,7 @@
   "tunName": "chimerac0",
   "mtu": 1400,
   "takeDefaultRoute": true,
+  "dns": [],
   "transport": "udp",
   "portHopCount": 1,
   "portHopSpread": 0,

@@ -523,9 +523,14 @@ func (a *ChimeraApp) saveConfig() error {
 		return fmt.Errorf("序列化配置失败: %w", err)
 	}
 
-	// 0600：配置中包含 PSK，尽量限制可读权限（Windows 上按文件系统语义处理）。
+	// 0600：配置中包含 PSK，尽量限制可读权限。NTFS 忽略 POSIX mode，
+	// Windows 上再显式收紧 DACL（仅当前用户可读）。
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("写入配置 %s 失败: %w", path, err)
+	}
+	if err := restrictFileACL(path); err != nil {
+		// 非致命：文件已写成功，权限收紧失败只记日志。
+		log.Printf("[ChimeraApp] 收紧配置文件 ACL 失败（%s）: %v", path, err)
 	}
 	log.Printf("[ChimeraApp] 配置已写入 %s", path)
 	return nil

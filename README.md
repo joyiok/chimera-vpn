@@ -1,50 +1,49 @@
-# CHIMERA PGC — 协议基因编译器（PoC）
+# CHIMERA PGC — Protocol Genome Compiler (PoC)
 
-CHIMERA 方案的第一步：**不模仿任何已知协议，而是从一颗 256-bit 种子生成一个全新的、结构合理的、可执行的协议物种。**
+CHIMERA's first step: **instead of imitating any known protocol, deterministically compile a brand-new, structurally valid, executable protocol species from a 256-bit seed.**
 
-思路来源：USENIX Security 2025 的 [UPGen](https://www.usenix.org/biblio/fake-title-653)（Unidentified Protocol Generation）。UPGen 的核心观点是：与其伪装成 TLS/QUIC 留下模仿破绽，不如生成“看起来像某种合法加密协议、但谁也没见过”的新协议；审查者若按类别封杀，会误伤加密货币钱包、IoT、游戏、企业内部协议等大量合法流量。
+The idea comes from [UPGen](https://www.usenix.org/biblio/fake-title-653) (Unidentified Protocol Generation, USENIX Security 2025). UPGen's core insight: rather than disguising traffic as TLS/QUIC — which always leaves imitation artifacts — generate a protocol that *looks like a legitimate encrypted protocol nobody has ever seen*. A censor that blocks it by category also breaks crypto wallets, IoT, games, and countless private enterprise protocols.
 
-本仓库是这条路线的可运行原型，当前已扩展为跨平台 monorepo。
+This repository is a runnable prototype of that route, grown into a cross-platform monorepo.
 
-**接手开发请看文档**：
-[交接说明](docs/HANDOFF.md) · [架构](docs/ARCHITECTURE.md) · [协议](docs/PROTOCOL.md) · [构建](docs/BUILD.md) · [部署](docs/DEPLOY.md) · [路线图](docs/ROADMAP.md) · [安全边界](docs/SECURITY.md)
+**Documentation for developers**:
+[Handoff](docs/HANDOFF.md) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Build](docs/BUILD.md) · [Deploy](docs/DEPLOY.md) · [Roadmap](docs/ROADMAP.md) · [Security](docs/SECURITY.md)
 
-
-
-- **Linux 服务端**：`cmd/chimerad`（TUN + UDP 生成协议；`-no-tun` 仅自测回显）
-- **Linux 命令行客户端**：`cmd/chimerac`（`-check` 探测 / TUN VPN + 可选默认路由接管）
-- **Windows 图形客户端**：`apps/windows`（Wails + Wintun 数据面 + 默认路由接管）
-- **Android 客户端**：`apps/android`（Kotlin VpnService + gomobile AAR）
-- **共享内核**：`core/`（所有平台调用同一个 Go 核心）、`bind/`（gomobile 入口）
-- **协议编译器**：`internal/{drbg,genome,compiler}`、UDP 传输 `internal/tunnel`
+- **Linux server**: `cmd/chimerad` (TUN + generated protocol; `-no-tun` echo mode for self-tests only)
+- **Linux CLI client**: `cmd/chimerac` (`-check` probe / TUN VPN + optional default-route takeover)
+- **Windows GUI client**: `apps/windows` (Wails + Wintun data plane + default-route takeover)
+- **Android client**: `apps/android` (Kotlin VpnService + gomobile AAR)
+- **Shared kernel**: `core/` (every platform calls the same Go core), `bind/` (gomobile entry point)
+- **Protocol compiler**: `internal/{drbg,genome,compiler}`, transports in `internal/tunnel`
+- **Evaluation tooling**: `cmd/chimera-eval`, `scripts/eval-capture.sh`
 
 ---
 
-## 目前实现了什么
+## What exists today
 
-输入 `(seed, generation)`，确定性产出：
+Given `(seed, generation)`, the compiler deterministically produces:
 
-1. **握手模式**：6 种（`c_s`、`c_s_c`、`c_s_c_s`、`c_c_s`、`s_c`、`s_c_s`）
-2. **每个消息的字段布局**：
-   - 明文字段池：`version / type / nonce / reserved`
-   - 长度字段：宽度（u8/u16/u24/u32）、大小端、语义（密文长/记录总长）、是否单独分段
-   - 加密字段池：`key_material / certificate / extra / pad_length`
-   - 字段顺序、固定/前缀编码方式全部随机采样
-3. **padding 策略**：`none / uniform / burst`
-4. **密码套件**：AES-128/192/256-GCM（Go 标准库）
-5. **可执行编解码器**：
-   - 按基因组把字段序列化到线上字节
-   - AEAD 加密、序列号防重放、篡改检测
-   - `LengthAlone` 时把长度字段拆成独立传输分段
-   - 流式 `ReadFrame`，支持任意长度字段位置和两种长度语义
-6. **可执行握手状态机**：
-   - PSK 派生 bootstrap 密钥
-   - 双方交换 X25519 临时密钥
-   - 用 ECDH + PSK + 握手转录派生前向保密会话密钥
-7. **自动化验证**：120 个随机种子端到端握手、全部消息往返、篡改拒绝、流式分帧、模式多样性。
+1. **Handshake pattern**: 6 variants (`c_s`, `c_s_c`, `c_s_c_s`, `c_c_s`, `s_c`, `s_c_s`)
+2. **Per-message field layouts**:
+   - Plaintext field pool: `version / type / nonce / reserved`
+   - Length fields: width (u8/u16/u24/u32), endianness, semantics (ciphertext length vs record length), standalone segmentation
+   - Encrypted field pool: `key_material / certificate / extra / pad_length`
+   - Field order and fixed/prefix encoding are sampled randomly
+3. **Padding policy**: `none / uniform / burst`
+4. **Cipher suites**: AES-128/192/256-GCM (Go standard library), ChaCha20-Poly1305 via explicit config
+5. **Executable codec**:
+   - Serializes fields to wire bytes per the genome
+   - AEAD encryption, sequence-number replay protection, tamper detection
+   - Splits the length field into its own transport segment when `LengthAlone`
+   - Streaming `ReadFrame` supporting arbitrary length-field positions and both length semantics
+6. **Executable handshake state machine**:
+   - PSK derives bootstrap keys
+   - Both sides exchange X25519 ephemerals
+   - Session keys derive from ECDH + PSK + handshake transcript (forward secrecy)
+7. **Automated verification**: 120 random seeds run end-to-end handshakes, full message round trips, tamper rejection, stream framing, and pattern diversity.
 
 ```text
-seed ──▶ HMAC-DRBG ──▶ 协议基因组 JSON
+seed ──▶ HMAC-DRBG ──▶ protocol genome JSON
                           │
                           ▼
                   Compile(genome, PSK)
@@ -55,35 +54,48 @@ seed ──▶ HMAC-DRBG ──▶ 协议基因组 JSON
               │ app-record codecs     │
               └───────────┬───────────┘
                           ▼
-                  可运行的端到端协议
+              a runnable end-to-end protocol
 ```
+
+### Transport layer
+
+The same compiled datagrams ride over multiple underlays:
+
+- **udp** (default): raw datagrams keep every shaping/jitter property.
+- **tcp**: 2-byte big-endian length framing for networks that QoS-throttle UDP.
+- **websocket / wss**: same framing over WebSocket binary messages; the upgrade path is derived from seed+generation, everything else gets an ordinary 404 so scanners cannot tell the listener apart from a normal web service. `wss` uses standard TLS ≥ 1.2.
+- **http / https**: paired POST upload + GET download legs carrying the same frames.
+- TCP listeners apply configurable unauthenticated-first-frame probe defense: `close`, `silent` (default), or `tls` (standard fatal alert for TLS-looking probes), with timeout and concurrency caps.
+- **Send-side noise mask**: after every N real writes the session emits one cryptographically random decoy frame (rate-capped). Receivers drop decoys via AEAD failure — no shared state.
+- **Port hopping**: the server binds the base port plus HMAC(seed, generation)-derived ports (count 1–16); clients probe the same sequence with a shortened 3s timeout. Works identically for UDP and TCP.
+- Per-genome shape ladders (five padding ladders selected by fingerprint), randomized keepalive intervals (75–125%), larger UDP socket buffers, zeroed ToS/DSCP.
 
 ---
 
-## 运行
+## Running
 
 ```bash
 cd /home/joy/chimera
 go test ./...
 go build ./...
-bash scripts/selftest.sh          # 不用 root；握手 + 地址分配 + 数据面回显
+bash scripts/selftest.sh          # no root needed; handshake + address assignment + data-plane echo
 
-# 固定种子（32 字节 = 64 个 hex 字符）
+# Fixed seed (32 bytes = 64 hex chars)
 go run ./cmd/gencompiler \
   -seed 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 
-# 协议变异：同一个种子、不同 generation，得到完全不同的协议
+# Protocol mutation: same seed, different generation -> completely different protocol
 go run ./cmd/gencompiler \
   -seed 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f \
   -gen 1
 
-# 输出完整基因组 JSON（可用于部署或分析）
+# Full genome JSON (for deployment or analysis)
 go run ./cmd/gencompiler \
   -seed 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f \
   -json /tmp/chimera-genome.json
 ```
 
-示例输出：
+Sample output:
 
 ```text
 protocol fingerprint: 329f3b93f59e27ab...
@@ -102,107 +114,96 @@ app record s2c  : "payload from the other direction" (round trip OK)
 
 ---
 
-## 关键设计决策
+## Key design decisions
 
-| 决策 | 原因 |
+| Decision | Why |
 |---|---|
-| 协议规格由种子确定 | 客户端/服务端不需要在线协商“协议长什么样”，无协商字段 = 无指纹可抓 |
-| 每服务器一个种子、每代一个变异 | 抓到并识别一个协议，只影响一个服务器的一代协议 |
-| 长度字段宽度由最坏情况帧大小反推 | 避免“协议生成了但无法编码合法消息”的无效基因型 |
-| 长度字段可位于任意明文位置 | 让前几个字节没有固定结构，提高分类器成本 |
-| 非 nonce = (消息索引, 序列号) | 同一 bootstrap 密钥跨多个握手消息复用时不发生 nonce 重用 |
-| bootstrap PSK + 临时 X25519 | 握手可先加密，会话密钥仍具前向保密性 |
-| 只依赖 Go 标准库 | 密码学实现可审计，构建简单 |
+| Protocol spec is seed-determined | Client/server never negotiate "what the protocol looks like" online; no negotiation fields = no fingerprint to grab |
+| One seed per server, one mutation per generation | Identifying a captured protocol only burns one server's one generation |
+| Length-field width derived from worst-case frame size | Avoids invalid genotypes where "the protocol was generated but cannot encode legal messages" |
+| Length field may sit at any plaintext position | The first bytes carry no fixed structure, raising classifier cost |
+| Nonce = (message index, sequence number) | No nonce reuse when the bootstrap key spans multiple handshake messages |
+| Bootstrap PSK + ephemeral X25519 | Handshake is encrypted from the first frame while session keys stay forward-secret |
+| Standard library only (crypto) | Auditable cryptography, simple builds |
 
 ---
 
-## 当前边界（重要）
+## Current boundaries (important)
 
-这**不是**高风险环境下的完整抗审查系统，但数据面与守护进程已按自建 VPN 生产运维收紧：
+This is **not** a complete anti-censorship system for high-risk environments, but the data plane and daemon are hardened for production self-hosted VPN operation:
 
-- 已实现：协议生成、AES-GCM / ChaCha20-Poly1305、UDP 握手（重传/诱饵/静默丢包）、**UDP/TCP/WebSocket/WSS 多传输**（TCP/WS 用 2 字节帧化承载同一协议，抗 UDP QoS/限速）、多客户端复用、地址自动分配、Linux TUN 桥接、Linux CLI 客户端（探测 + TUN）、Windows 路由接管、**局域网/私网分流**（Windows 路由直连 + Android 公网白名单路由）、包模式 ACK/SKIP、NAT keepalive、会话配额与限速、包长整形、发送时序抖动、服务端 generation 窗口、chimerad 单会话故障隔离、握手可打印封面（gfw.report FEP Ex2/Ex4）、server-first 认证 knock、握手首包重放表、UDP socket 缓冲/ToS 调优、TCP 首帧探测防御（silent/tls 行为拟态 + 并发上限）、**发送侧噪声掩码**（真实帧间混入高熵假帧，两端无状态丢弃）、**端口跳跃**（seed+generation 派生多端口，客户端自动探测，UDP/TCP/WebSocket 通用）
-- 未实现：真机 Android 验收、车道 B/C（CDN 广播 / 真实应用寄生）、完整流量变形
-- `EstimatedEntropyBits` 是生成器自记账的近似值，不是安全证明
+- Implemented: protocol generation, AES-GCM / ChaCha20-Poly1305, UDP handshake (retransmit / decoys / silent drop), **UDP/TCP/WebSocket/WSS/HTTP(S) multi-transport**, multi-client multiplexing, automatic address assignment, Linux TUN bridging, Linux CLI client (probe + TUN), Windows route takeover, **LAN/private-network split tunneling** (Windows bypass routes + Android public-range whitelist), packet-mode ACK/SKIP, NAT keepalive, session quotas and rate limiting, packet-length shaping, send-side timing jitter, server generation window, per-session fault isolation in chimerad, printable handshake covers (gfw.report FEP Ex2/Ex4), server-first authenticated knock, handshake first-packet replay table, UDP socket buffer/ToS tuning, TCP first-frame probe defense (silent/tls mimicry + concurrency caps), **send-side noise mask**, **port hopping**, roaming session reclamation on the server, configurable tunnel DNS on Linux, restrictive ACL on the Windows config file.
+- Not implemented: on-device Android acceptance testing, lane B/C (CDN broadcast / real-application parasitism), full traffic morphing.
+- `EstimatedEntropyBits` is the generator's own bookkeeping approximation, not a security proof.
 
 ---
 
-## 下一步（按建议顺序）
+## Next steps (suggested order)
 
-1. **真机联调**：Android `protect(fd)` + VpnService
-2. **车道 B**：密文分片发布到 CDN/直播载体，客户端以拟人行为拉取
-3. **对抗评估**：`cmd/chimera-eval` 对 tcpdump pcap 跑 gfw.report/Wu 2023 首包启发式 + 包长/IAT。这是论文推断检测器，不是「已经骗过 GFW」。需要境内观测点才能谈真实封锁。
+1. **On-device testing**: Android `protect(fd)` + VpnService against real networks.
+2. **Lane B**: publish ciphertext fragments via CDN/object storage; clients fetch with human-like browsing behavior.
+3. **Adversarial evaluation**: `cmd/chimera-eval` scores tcpdump pcaps against gfw.report / Wu 2023 first-packet heuristics plus length/IAT statistics. This is the paper-inferred detector, not proof of evading the live GFW; real claims need observation points inside censored networks.
 
-## 目录
+## Directory layout
 
 ```text
-cmd/gencompiler/      CLI：生成、摘要、端到端演示
-internal/drbg/        HMAC-DRBG 确定性随机源
-internal/genome/      协议基因组类型与生成器
-internal/compiler/    编解码、握手状态机、会话
+cmd/gencompiler/      CLI: generate, summarize, end-to-end demo
+cmd/chimerad/         Server daemon (TUN, sessions, routing)
+cmd/chimerac/         Linux CLI client (probe, TUN, routes, DNS)
+cmd/chimera-eval/     pcap scoring against published heuristics
+internal/drbg/        HMAC-DRBG deterministic randomness
+internal/genome/      Protocol genome types and generator
+internal/compiler/    Codec, handshake state machine, sessions
+internal/tunnel/      UDP/TCP/WebSocket/HTTP transports, mux, shaping
+core/                 Shared client/server core (transports, port hop, TLS)
+bind/                 gomobile API for Android
+apps/windows/         Wails GUI client (Go + JS frontend)
+apps/android/         Kotlin VpnService client
 ```
 
 ---
 
-## 平台状态
+## Platform status
 
-| 平台 | 目录 | 状态 |
+| Platform | Directory | Status |
 |---|---|---|
-| Linux 服务端 | `cmd/chimerad` | 已实现：多客户端 UDP 握手复用 + TUN 桥接；需 root/CAP_NET_ADMIN + NAT 脚本；` -no-tun` 仅自测 |
-| Linux CLI | `cmd/chimerac` | `-check` 探测；TUN + 半默认路由接管（IPv6 `::/1`+`8000::/1` 尽力） |
-| Windows GUI | `apps/windows` | Wails GUI + Wintun 包泵 + 默认路由接管 |
-| Android | `apps/android` | VpnService + gomobile AAR；`protect(fd)` 防自环 |
+| Linux server | `cmd/chimerad` | Done: multi-client UDP handshake multiplexing + TUN bridging; needs root/CAP_NET_ADMIN + NAT script; `-no-tun` is self-test only |
+| Linux CLI | `cmd/chimerac` | `-check` probe; TUN + half-default route takeover (best-effort IPv6 `::/1`+`8000::/1`) |
+| Windows GUI | `apps/windows` | Wails GUI + Wintun packet pump + default-route takeover |
+| Android | `apps/android` | VpnService + gomobile AAR; `protect(fd)` loop prevention |
 
-## 运行 Linux 服务端
+## Running the Linux server
 
 ```bash
-# 1. 生成本地密钥对
+# 1. Generate the local key pair
 go run ./cmd/chimera-init -dir ./local -server YOUR.PUBLIC.IP:4789
 
-# 2. 构建并安装
+# 2. Build and install
 CGO_ENABLED=0 go build -o /usr/local/bin/chimerad ./cmd/chimerad
 CGO_ENABLED=0 go build -o /usr/local/bin/chimerac ./cmd/chimerac
 install -m 644 deploy/chimerad.service /etc/systemd/system/
 
-# 3. 开启转发和 NAT（把 eth0 换成实际出口网卡）
+# 3. Enable forwarding and NAT (replace eth0 with your egress interface)
 sudo ./scripts/setup-nat.sh eth0
 
-# 4. 启动
+# 4. Start
 sudo systemctl start chimerad
 journalctl -u chimerad -f
 ```
 
-**多客户端与自动分配**：服务端在 `client_cidr`（如 `10.99.0.0/24`）内自动给每个客户端分配唯一 TUN 地址（`.1` 保留给网关，`.2` 起分配，释放后复用）。握手完成后服务器立即下发加密控制包，Android 先取地址再建虚拟网卡；界面上的“本机 TUN 地址”成为服务端未开启分配时的回退项。
+**Multi-client and auto-assignment**: the server hands each client a unique TUN address from `client_cidr` (e.g. `10.99.0.0/24`; `.1` is reserved for the gateway, assignment starts at `.2`, addresses are reused after release). Right after the handshake the server pushes an encrypted control packet; Android requests the address before creating its TUN. The "local TUN address" field in the clients is the fallback used when the server has no `client_cidr` configured.
 
-## 移动端构建
+## Mobile builds
 
-GitHub Actions 会上传：
+GitHub Actions uploads:
 
-- `Chimera-linux-amd64` — `ubuntu-latest`，`chimerad` + `chimerac` + `chimera-init`
-- `ChimeraClient-windows-amd64` — `windows-latest`，Wails GUI + `wintun.dll`
-- `ChimeraClient-android-debug` — `ubuntu-latest`，gomobile AAR + `assembleDebug`
+- `Chimera-linux-amd64` — `ubuntu-latest`: `chimerad` + `chimerac` + `chimera-init`
+- `ChimeraClient-windows-amd64` — `windows-latest`: Wails GUI + `wintun.dll`
+- `ChimeraClient-android-debug` — `ubuntu-latest`: gomobile AAR + `assembleDebug`
 
 ```bash
-# Android：生成 app/libs/bind.aar（需要 ANDROID_HOME + NDK）
-./build/build-mobile-core.sh   # 或 apps/android/build-android-core.sh
+# Android: generate app/libs/bind.aar (needs ANDROID_HOME + NDK)
+./build/build-mobile-core.sh   # or apps/android/build-android-core.sh
 ```
 
-`bind` 包只暴露四个函数：`Start / Stop / Send / Receive`，平台层负责把系统 TUN 的数据流与 Go 核心对接。
-
-## 目录
-
-```text
-cmd/gencompiler/      协议基因编译器 CLI
-cmd/chimerad/         Linux 服务端
-cmd/chimerac/         Linux 客户端（-check / TUN）
-cmd/chimera-init/     生成匹配的 server.json + client.json
-core/                 跨平台客户端/服务端 Go API
-bind/                 gomobile 移动端绑定
-internal/drbg/        HMAC-DRBG 确定性随机源
-internal/genome/      协议基因组类型与生成器
-internal/compiler/    编解码、流/包会话、握手状态机
-internal/tunnel/      UDP 握手与 packet tunnel
-internal/tun/         Linux TUN 抽象
-apps/windows/         Windows Wails GUI
-apps/android/         Android VpnService 客户端
-configs/ deploy/ build/ scripts/
-```
+The `bind` package exposes a minimal gomobile surface (`Start / Stop / Send / Receive`, plus the transport/hop variants); each platform shell is responsible for bridging its system TUN data flow to the Go core.

@@ -29,6 +29,10 @@ import (
 	"chimera/internal/tun"
 )
 
+// roamReapAfter is how long a same-host session must stay inbound-silent
+// before a newer session from that host is allowed to reclaim it.
+const roamReapAfter = 30 * time.Second
+
 func main() {
 	configPath := flag.String("config", "/etc/chimera/server.json", "server JSON config path")
 	checkConfig := flag.Bool("check-config", false, "validate config and exit")
@@ -275,6 +279,13 @@ func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute) {
 				_ = displaced.Close()
 			}
 			registered = true
+			// Roam reclamation: a client that rebound its NAT port leaves
+			// its old session silent on an old endpoint. Reap it early so
+			// it does not pin a pool address / MaxSessions slot.
+			for _, old := range routes.reapRoamed(hostIP(conn.RemoteAddr()), conn, roamReapAfter) {
+				log.Printf("closing roamed session from %s (silent >= %v)", old.RemoteAddr(), roamReapAfter)
+				_ = old.Close()
+			}
 		}
 		if _, err := dev.Write(pkt); err != nil {
 			log.Printf("tun write from %s: %v", conn.RemoteAddr(), err)
