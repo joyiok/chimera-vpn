@@ -1,8 +1,12 @@
 package com.chimera.vpn
 
-import android.util.Base64
+// Pure-JVM by design: no android.* imports, so Invites is unit-testable
+// with plain JUnit (see app/src/test). Base64 uses java.util.Base64
+// (available since API 26) and connect-URL queries are parsed manually.
+
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.Locale
 
 /**
@@ -21,7 +25,8 @@ data class Invite(
 object Invites {
     private const val V1 = "chimera://v1/"
     private const val CONNECT = "chimera://connect"
-    private const val B64 = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+    private val B64ENC: Base64.Encoder = Base64.getUrlEncoder().withoutPadding()
+    private val B64DEC: Base64.Decoder = Base64.getUrlDecoder()
 
     fun format(p: Invite): String {
         val n = normalize(p)
@@ -33,7 +38,7 @@ object Invites {
             .put("g", n.generation)
         if (n.name.isNotEmpty()) obj.put("n", n.name)
         val raw = obj.toString().toByteArray(StandardCharsets.UTF_8)
-        return V1 + Base64.encodeToString(raw, B64)
+        return V1 + B64ENC.encodeToString(raw)
     }
 
     fun parse(text: String): Invite {
@@ -49,11 +54,9 @@ object Invites {
     }
 
     private fun parseV1(payload: String): Invite {
-        val decoded = try {
-            Base64.decode(payload, B64)
-        } catch (_: IllegalArgumentException) {
-            Base64.decode(payload, Base64.URL_SAFE or Base64.NO_WRAP)
-        }
+        // java.util.Base64 tolerates missing padding, which covers both the
+        // NO_PADDING canonical form and padded variants.
+        val decoded = B64DEC.decode(payload)
         val obj = JSONObject(String(decoded, StandardCharsets.UTF_8))
         val v = obj.optInt("v", 1)
         if (v != 0 && v != 1) throw IllegalArgumentException("unsupported invite version $v")
@@ -69,17 +72,31 @@ object Invites {
     }
 
     private fun parseConnect(raw: String): Invite {
-        val q = android.net.Uri.parse(raw)
-        val gen = q.getQueryParameter("generation") ?: q.getQueryParameter("g")
+        val params = queryParams(raw)
+        val gen = firstQuery(params, "generation", "g")
         return normalize(
             Invite(
-                addr = firstQuery(q, "addr", "server", "serverAddr"),
-                seedHex = firstQuery(q, "seed", "seedHex"),
-                pskHex = firstQuery(q, "psk", "pskHex"),
-                generation = gen?.toLongOrNull() ?: 0L,
-                name = firstQuery(q, "name", "n")
+                addr = firstQuery(params, "addr", "server", "serverAddr"),
+                seedHex = firstQuery(params, "seed", "seedHex"),
+                pskHex = firstQuery(params, "psk", "pskHex"),
+                generation = gen.toLongOrNull() ?: 0L,
+                name = firstQuery(params, "name", "n")
             )
         )
+    }
+
+    private fun queryParams(raw: String): Map<String, String> {
+        val query = raw.substringAfter('?', "")
+        val out = LinkedHashMap<String, String>()
+        for (pair in query.split('&')) {
+            if (pair.isEmpty()) continue
+            val i = pair.indexOf('=')
+            val k = if (i >= 0) pair.substring(0, i) else pair
+            val v = if (i >= 0) pair.substring(i + 1) else ""
+            if (k.isEmpty() || out.containsKey(k)) continue
+            out[k] = java.net.URLDecoder.decode(v, StandardCharsets.UTF_8)
+        }
+        return out
     }
 
     private fun parseJson(s: String): Invite {
@@ -128,9 +145,9 @@ object Invites {
         return null
     }
 
-    private fun firstQuery(uri: android.net.Uri, vararg keys: String): String {
+    private fun firstQuery(params: Map<String, String>, vararg keys: String): String {
         for (k in keys) {
-            val v = uri.getQueryParameter(k)?.trim().orEmpty()
+            val v = params[k]?.trim().orEmpty()
             if (v.isNotEmpty()) return v
         }
         return ""

@@ -1,4 +1,5 @@
 import './style.css'
+import { escapeHtml, formatBytes, validateHop, validateTransport } from './lib.js'
 
 const SPARK_ACCENT = '#DC7A44'
 const SPARK_OK = '#7FC581'
@@ -97,22 +98,6 @@ let currentStatus = 'disconnected'
 
 function svgIcon(name) {
   return `<svg class="ico" aria-hidden="true"><use href="#i-${name}"></use></svg>`
-}
-
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-function formatBytes(n) {
-  const v = Number(n) || 0
-  if (v < 1024) return `${v} B`
-  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`
-  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(2)} MB`
-  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 function log(message, level = 'info') {
@@ -358,29 +343,30 @@ async function connect() {
   const name = els.serverName.value.trim()
   const transport = els.transportInput.value.trim().toLowerCase() || 'udp'
   const splitTunnel = els.splitTunnel.checked
-  const hopCount = Number.parseInt(els.portHopCount.value || '1', 10)
-  const hopSpread = Number.parseInt(els.portHopSpread.value || '0', 10)
-  if (!Number.isInteger(hopCount) || hopCount < 1 || hopCount > 16) {
-    log('端口跳跃数必须在 1-16 之间。', 'warn')
+  const hop = validateHop(els.portHopCount.value, els.portHopSpread.value)
+  if (!hop.ok) {
+    log(hop.error, 'warn')
     return
   }
-  const hopSpreadFinal = hopCount > 1 && hopSpread <= 0 ? 2048 : hopSpread
+  const hopCount = hop.hopCount
+  const hopSpreadFinal = hop.hopSpread
 
-  if (transport !== 'udp' && transport !== 'tcp' && transport !== 'websocket' && transport !== 'wss') {
-    log('传输只能是 udp/tcp/websocket/wss。', 'warn')
+  const tr = validateTransport(transport)
+  if (!tr.ok) {
+    log(tr.error, 'warn')
     return
   }
 
   setBusy(true)
   renderStatus('connecting')
-  log(`正在连接 server=${serverAddr} generation=${generation} transport=${transport} split=${splitTunnel} hop=${hopCount}/${hopSpreadFinal}`)
+  log(`正在连接 server=${serverAddr} generation=${generation} transport=${tr.transport} split=${splitTunnel} hop=${hopCount}/${hopSpreadFinal}`)
   try {
     if (typeof api.StartWithOptions === 'function') {
-      await api.StartWithOptions(seedHex, generation, pskHex, serverAddr, transport, splitTunnel, hopCount, hopSpreadFinal)
+      await api.StartWithOptions(seedHex, generation, pskHex, serverAddr, tr.transport, splitTunnel, hopCount, hopSpreadFinal)
     } else if (typeof api.StartAdvanced === 'function') {
-      await api.StartAdvanced(seedHex, generation, pskHex, serverAddr, transport, splitTunnel)
+      await api.StartAdvanced(seedHex, generation, pskHex, serverAddr, tr.transport, splitTunnel)
     } else if (typeof api.StartWithTransport === 'function') {
-      await api.StartWithTransport(seedHex, generation, pskHex, serverAddr, transport)
+      await api.StartWithTransport(seedHex, generation, pskHex, serverAddr, tr.transport)
     } else {
       await api.Start(seedHex, generation, pskHex, serverAddr)
     }

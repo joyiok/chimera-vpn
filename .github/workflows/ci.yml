@@ -85,6 +85,12 @@ jobs:
       - name: Cross-compile windows/amd64
         run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags with_transport ./...
 
+      - name: Frontend unit tests (node --test)
+        working-directory: apps/windows/frontend
+        run: |
+          npm ci
+          npm test
+
   # Real GUI: Wails + WebView2 needs Windows + CGO. The Ubuntu job above only
   # proves the Go packages cross-compile; this job produces ChimeraClient.exe.
   windows-wails:
@@ -231,11 +237,11 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: assembleDebug
+      - name: unit tests + assembleDebug
         working-directory: apps/android
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: gradle assembleDebug --stacktrace
+        run: gradle testDebugUnitTest assembleDebug --stacktrace
 
       - name: Upload Android client
         uses: actions/upload-artifact@v4

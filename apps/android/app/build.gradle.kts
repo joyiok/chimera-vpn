@@ -49,6 +49,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // JVM 单元测试：org.json 用真实构件（android.jar 里的 stub 在本地
+    // 测试中只返回默认值），Invite 因此保持纯 JVM 可测。
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+
     if (bindAarExists) {
         implementation(files("libs/bind.aar"))
     }
