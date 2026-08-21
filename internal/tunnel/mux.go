@@ -937,6 +937,12 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 	case m.ready <- tun:
 	case <-m.closed:
 		tun.Close()
+	default:
+		// Accept backlog full: shed the newest session instead of stalling
+		// the read loop — a blocking send here freezes every established
+		// session on this socket while the application is not accepting.
+		// The client re-handshakes.
+		tun.Close()
 	}
 }
 

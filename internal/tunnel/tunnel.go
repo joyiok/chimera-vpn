@@ -458,8 +458,12 @@ func (t *PacketTunnel) WaitControl(ctx context.Context) ([]byte, error) {
 		case pkt := <-t.ctrl:
 			return pkt, nil
 		case pkt := <-t.data:
-			// Drain data read by a concurrent ReceivePacket.
-			_ = pkt
+			// Re-queue data read by a concurrent ReceivePacket (or seen on
+			// the socket while waiting) so ReceivePacket does not lose it.
+			select {
+			case t.data <- pkt:
+			default:
+			}
 			continue
 		case <-ctx.Done():
 			return nil, ctx.Err()

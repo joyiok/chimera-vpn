@@ -153,6 +153,9 @@ func (s *Server) maybeStartHTTPSession(sid string, p *httpSession, ctx context.C
 	go func() {
 		s.handleStreamConn(ctx, conn, cps, psk)
 		<-conn.Done()
+		// Release the upload/download handler goroutines: they park on
+		// p.done once the legs are paired and nothing else closes it.
+		close(p.done)
 		s.dropHTTPSession(sid)
 	}()
 	return true

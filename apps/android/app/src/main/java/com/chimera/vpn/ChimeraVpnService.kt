@@ -14,6 +14,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,12 @@ class ChimeraVpnService : VpnService() {
     private var tunOut: FileOutputStream? = null
     private val sessionLock = Any()
     @Volatile private var reconnecting = false
+    // 防止 Activity/QS 磁贴双击等并发入口同时进入 startVpn，泄漏第一个 Go 会话。
+    private val starting = AtomicBoolean(false)
+    // 重连连续失败计数：成功归零，失败按 5s/10s/20s/40s/60s 退避重试。
+    private var reconnectAttempts = 0
+    private var lastNotifiedSent = -1L
+    private var lastNotifiedRecv = -1L
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var goToTunJob: Job? = null
@@ -60,6 +67,9 @@ class ChimeraVpnService : VpnService() {
             ACTION_RECONNECT -> {
                 if (isRunning) {
                     requestReconnect("notification")
+                } else {
+                    // 服务正在拆除时点重连：不留一个空转的实例和过期通知。
+                    stopSelf()
                 }
                 return START_NOT_STICKY
             }
@@ -69,6 +79,10 @@ class ChimeraVpnService : VpnService() {
 
         if (vpnInterface != null) {
             postLog("VPN 已在运行，忽略重复启动")
+            return START_NOT_STICKY
+        }
+        if (!starting.compareAndSet(false, true)) {
+            postLog("正在建立连接，忽略重复启动")
             return START_NOT_STICKY
         }
 
@@ -190,6 +204,7 @@ class ChimeraVpnService : VpnService() {
             vpnInterface = pfd
             tunAddr = tunAddrAssigned
             isRunning = true
+            reconnectAttempts = 0
 
             postStatus(getString(R.string.status_connected))
             postLog("Go 核心已启动，handle=$handle，本地地址 $tunAddrAssigned/24${if (assigned != null) "（服务器分配）" else "（手动配置）"}")
@@ -206,12 +221,17 @@ class ChimeraVpnService : VpnService() {
             postLog("连接失败：${t.javaClass.simpleName}: ${t.message}")
             stopVpn()
             stopSelf()
+        } finally {
+            starting.set(false)
         }
     }
 
     private fun startGo(config: VpnConfig): Long {
-        if (config.portHopCount > 1) {
-            return GoBind.startTransportWithHop(
+        // 首选 hop 入口：它同时承载 transport 选择与端口跳跃（count<=1 即
+        // 不跳跃）。websocket/wss 必须走这里，旧代码只把 "tcp" 传下去，
+        // 其余传输会被静默降级成 UDP，对 wss-only 服务器必然连不上。
+        return try {
+            GoBind.startTransportWithHop(
                 seedHex = config.seedHex,
                 generation = config.generation,
                 pskHex = config.pskHex,
@@ -220,22 +240,15 @@ class ChimeraVpnService : VpnService() {
                 hopCount = config.portHopCount,
                 hopSpread = config.portHopSpread
             )
-        }
-        return if (config.transport == "tcp") {
-            GoBind.startTransport(
-                seedHex = config.seedHex,
-                generation = config.generation,
-                pskHex = config.pskHex,
-                serverAddr = config.serverAddr,
-                transport = "tcp"
-            )
-        } else {
-            GoBind.start(
-                seedHex = config.seedHex,
-                generation = config.generation,
-                pskHex = config.pskHex,
-                serverAddr = config.serverAddr
-            )
+        } catch (e: NoSuchMethodException) {
+            // 旧 AAR 没有 hop 入口：尽力降级，不支持就明确报错。
+            when {
+                config.transport == "udp" && config.portHopCount <= 1 ->
+                    GoBind.start(config.seedHex, config.generation, config.pskHex, config.serverAddr)
+                config.transport == "tcp" ->
+                    GoBind.startTransport(config.seedHex, config.generation, config.pskHex, config.serverAddr, "tcp")
+                else -> throw IllegalStateException("当前核心库不支持 ${config.transport} 传输，请重新构建 AAR", e)
+            }
         }
     }
 
@@ -253,7 +266,12 @@ class ChimeraVpnService : VpnService() {
             val routes = resources.getStringArray(R.array.split_tunnel_ipv4_routes)
             var added = 0
             for (route in routes) {
-                runCatching { builder.addRoute(route, 0) }
+                runCatching {
+                    // 数组元素是 "a.b.c.d/p" 形式；部分系统版本不接受带
+                    // 斜杠的 address，这里显式拆成 address + prefix。
+                    val parts = route.split("/")
+                    builder.addRoute(parts[0], if (parts.size > 1) parts[1].toInt() else 0)
+                }
                     .onSuccess { added++ }
                     .onFailure { postLog("分流路由 ${route} 被系统拒绝：${it.message}") }
             }
@@ -376,8 +394,13 @@ class ChimeraVpnService : VpnService() {
                 val sent = bytesSent.get()
                 val recv = bytesRecv.get()
                 postTraffic(sent, recv)
-                val nm = getSystemService(NotificationManager::class.java)
-                nm.notify(NOTIFICATION_ID, buildNotification())
+                // 流量数字没变化就不重建通知：每秒重建会反复唤醒通知面板。
+                if (sent != lastNotifiedSent || recv != lastNotifiedRecv) {
+                    val nm = getSystemService(NotificationManager::class.java)
+                    nm.notify(NOTIFICATION_ID, buildNotification())
+                    lastNotifiedSent = sent
+                    lastNotifiedRecv = recv
+                }
                 delay(1000)
             }
         }
@@ -431,15 +454,36 @@ class ChimeraVpnService : VpnService() {
             }
             val oldHandle = vpnHandle
             vpnHandle = newHandle
+            // 先重启泵再停旧 handle：receive() 阻塞在旧 handle 的 JNI 调用里，
+            // stop(oldHandle) 会把它错误返回，已取消的旧协程随之退出；
+            // 不重启泵的话新隧道的数据没人消费。
+            startPumps()
             if (oldHandle >= 0L && oldHandle != newHandle) {
                 runCatching { GoBind.stop(oldHandle) }
+                    .onFailure { postLog("停止旧 Go 会话失败：${it.message}") }
             }
+            reconnectAttempts = 0
             postStatus(getString(R.string.status_connected))
             postLog("重连成功，handle=$newHandle")
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) throw t
             postLog("重连失败：${t.message}")
             postStatus("重连失败：${t.message}")
+            // 有界退避重试：失败后不能只靠 watchdog 的 idleMillis（死
+            // handle 上它永远返回 0，等于放弃重试）。
+            reconnectAttempts++
+            if (reconnectAttempts <= 5) {
+                val delayMs = 5_000L shl (reconnectAttempts - 1)
+                postLog("${delayMs / 1000}s 后自动重试（第 $reconnectAttempts 次）")
+                serviceScope.launch {
+                    delay(delayMs)
+                    if (isRunning) reconnectGo("retry #$reconnectAttempts")
+                }
+            } else {
+                postLog("连续重连失败 $reconnectAttempts 次，停止重试")
+                stopVpn()
+                stopSelf()
+            }
         } finally {
             reconnecting = false
         }

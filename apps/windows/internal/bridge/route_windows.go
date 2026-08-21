@@ -146,6 +146,23 @@ func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate
 			}
 			havePhys = true
 		}
+		// The TUN's own /24 sits inside 10.0.0.0/8; without this more
+		// specific route the bypass would send in-tunnel traffic (gateway,
+		// peer addresses) out the physical NIC and break the tunnel.
+		tunSubnet, err := tunSubnetPrefix(tunIP)
+		if err != nil {
+			rollback()
+			return err
+		}
+		tunSpec := routeSpec{prefix: tunSubnet, ifIndex: tunIdx, ifName: tunName, nexthop: gateway}
+		if err := addRoute(tunSpec); !isRouteExistsErr(err) {
+			rollback()
+			return fmt.Errorf("add tun subnet %s on %s: %w", tunSubnet, tunName, err)
+		}
+		t.specs = append(t.specs, tunSpec)
+		installed++
+		log.Printf("[route] tun subnet %s -> %s (gw %s)", tunSubnet, tunName, gateway)
+
 		for _, prefix := range privateBypassRoutes {
 			spec := routeSpec{prefix: prefix, ifIndex: phys.index, ifName: phys.name, nexthop: phys.gateway}
 			if err := addRoute(spec); !isRouteExistsErr(err) {

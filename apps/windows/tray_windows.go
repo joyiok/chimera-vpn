@@ -233,7 +233,12 @@ func handleTrayCommand(id uint16) {
 	case idConnect:
 		trayApp.mu.Lock()
 		cfg := trayApp.cfg
+		status := trayApp.status
 		trayApp.mu.Unlock()
+		// connecting/error 状态下不重复派发，避免与 UI/watchdog 竞争。
+		if status == "connecting" {
+			return
+		}
 		go func() {
 			if err := trayApp.Start(cfg.SeedHex, cfg.Generation, cfg.PSKHex, cfg.ServerAddr); err != nil {
 				log.Printf("[tray] connect: %v", err)

@@ -56,6 +56,8 @@ func start(seedHex string, generation int64, pskHex string, serverAddr string, t
 		PSKHex:            pskHex,
 		ServerAddr:        serverAddr,
 		Transport:         transport,
+		PortHopCount:      int(hopCount),
+		PortHopSpread:     int(hopSpread),
 	})
 	if err != nil {
 		return 0, err

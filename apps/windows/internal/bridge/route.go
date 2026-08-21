@@ -129,6 +129,20 @@ func tunGateway(clientIP string) (string, error) {
 	return gw.String(), nil
 }
 
+// tunSubnetPrefix returns the /24 the client TUN address lives in, e.g.
+// "10.99.0.5" -> "10.99.0.0/24". Split mode must pin this prefix to the
+// TUN adapter: it is covered by the 10.0.0.0/8 private bypass, which is
+// more specific than the half-default TUN routes and would otherwise
+// blackhole all in-tunnel traffic via the physical NIC.
+func tunSubnetPrefix(clientIP string) (string, error) {
+	ip := net.ParseIP(clientIP)
+	v4 := ip.To4()
+	if v4 == nil {
+		return "", fmt.Errorf("tun address %q is not IPv4", clientIP)
+	}
+	return v4.Mask(net.CIDRMask(24, 32)).String() + "/24", nil
+}
+
 // hostFromAddr strips a port if present: "1.2.3.4:443" -> "1.2.3.4",
 // "[::1]:443" -> "::1", "vpn.example.com" unchanged.
 func hostFromAddr(addr string) string {

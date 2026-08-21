@@ -28,7 +28,7 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client, assigned, err := startClient(cfg, 10*time.Second)
+	client, assigned, err := startClient(sigCtx, cfg, 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 			}
 			backoff = nextBackoff(backoff)
 			var err error
-			next, ip, err = startClient(cfg, 10*time.Second)
+			next, ip, err = startClient(sigCtx, cfg, 10*time.Second)
 			if err == nil {
 				break
 			}

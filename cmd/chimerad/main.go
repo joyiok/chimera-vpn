@@ -267,8 +267,12 @@ func pumpClientToTun(conn *core.Conn, dev *tun.Device, routes *clientRoute) {
 		src := packetIP(pkt, false)
 		if src != "" {
 			if displaced := routes.register(conn, src); displaced != nil && displaced != conn {
-				log.Printf("WARNING: %s re-registered TUN address %s previously used by %s",
+				log.Printf("WARNING: %s re-registered TUN address %s previously used by %s; closing displaced session",
 					conn.RemoteAddr(), src, displaced.RemoteAddr())
+				// Two live writers for one source IP would ping-pong packets
+				// into the TUN and hold a pool lease + session slot until
+				// the idle reap. Close the displaced session eagerly.
+				_ = displaced.Close()
 			}
 			registered = true
 		}

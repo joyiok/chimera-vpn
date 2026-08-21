@@ -367,7 +367,7 @@ async function connect() {
   const hopSpreadFinal = hopCount > 1 && hopSpread <= 0 ? 2048 : hopSpread
 
   if (transport !== 'udp' && transport !== 'tcp' && transport !== 'websocket' && transport !== 'wss') {
-    log('传输只能是 udp 或 tcp。', 'warn')
+    log('传输只能是 udp/tcp/websocket/wss。', 'warn')
     return
   }
 

@@ -210,6 +210,14 @@ func NewClient(cfg Config) (*Client, error) {
 // are probed in order, so a server that rotated its generation is picked
 // up automatically.
 func (c *Client) Start() error {
+	return c.StartContext(context.Background())
+}
+
+// StartContext is Start with cancellation between handshake probes. The
+// context is checked before every generation attempt and before every
+// derived-port dial, so Ctrl-C / shutdown bounds the wait to a single
+// dial+handshake instead of the whole probe sequence.
+func (c *Client) StartContext(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.tun != nil {
@@ -219,8 +227,14 @@ func (c *Client) Start() error {
 	window := c.cfg.GenerationWindow
 	var lastErr error
 	for attempt := uint64(0); attempt <= window; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if lastErr == nil {
+				lastErr = err
+			}
+			return lastErr
+		}
 		gen := c.cfg.Generation + attempt
-		tun, conn, err := startSession(c.cfg, gen)
+		tun, conn, err := startSessionCtx(ctx, c.cfg, gen)
 		if err == nil {
 			c.conn = conn
 			c.tun = tun
@@ -239,6 +253,10 @@ func (c *Client) Start() error {
 // genome, handshake. Dead derived ports are skipped quickly; the first
 // working port becomes the session endpoint.
 func startSession(cfg Config, generation uint64) (*tunnel.PacketTunnel, net.PacketConn, error) {
+	return startSessionCtx(context.Background(), cfg, generation)
+}
+
+func startSessionCtx(ctx context.Context, cfg Config, generation uint64) (*tunnel.PacketTunnel, net.PacketConn, error) {
 	addrs, err := hopAddrsForConfig(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -249,6 +267,9 @@ func startSession(cfg Config, generation uint64) (*tunnel.PacketTunnel, net.Pack
 	}
 	var lastErr error
 	for _, addr := range addrs {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		attemptCfg := cfg
 		attemptCfg.ServerAddr = addr
 		tun, conn, err := dialSession(attemptCfg, generation, timeout)

@@ -52,6 +52,17 @@ type ChimeraApp struct {
 	lastErr string
 	quit    bool
 
+	// lifecycleMu 串行化 start()/Stop()：UI、托盘、watchdog 三个入口可能
+	// 并发触发，未串行化时对 transportClient 等包级全局的交错访问会产生
+	// 数据竞争，且“用户刚点断开、进行中的 start 又把隧道拉起来”。
+	lifecycleMu sync.Mutex
+	// wantConnected 记录最近一次意图：start() 置 true，Stop() 置 false。
+	// watchdog 只在 wantConnected 时才自动重连，避免违背用户断开操作。
+	wantConnected bool
+	// watchdog 重连失败后的退避重试状态。
+	wdRetryable   bool
+	wdLastAttempt time.Time
+
 	wdOnce sync.Once
 }
 
@@ -85,14 +96,15 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 	return a.start(seedHex, generation, pskHex, serverAddr, "", split, a.cfg.PortHopCount, a.cfg.PortHopSpread)
 }
 
-// StartWithTransport 是 Start 的扩展，允许选择 udp 或 tcp 底层传输。
-// 旧前端继续调用 Start 时会沿用上次保存的 transport（默认 udp）。
+// StartWithTransport 是 Start 的扩展，允许选择 udp/tcp/websocket/wss 底层传输。
+// 分流开关沿用上次保存的偏好，与旧行为（强制 true）不同。
 func (a *ChimeraApp) StartWithTransport(seedHex string, generation uint64, pskHex string, serverAddr string, transport string) error {
 	a.mu.Lock()
+	split := a.cfg.SplitTunnel
 	hops := a.cfg.PortHopCount
 	spread := a.cfg.PortHopSpread
 	a.mu.Unlock()
-	return a.start(seedHex, generation, pskHex, serverAddr, transport, true, hops, spread)
+	return a.start(seedHex, generation, pskHex, serverAddr, transport, split, hops, spread)
 }
 
 // StartAdvanced 是完整参数入口：transport + splitTunnel。
@@ -110,6 +122,9 @@ func (a *ChimeraApp) StartWithOptions(seedHex string, generation uint64, pskHex 
 }
 
 func (a *ChimeraApp) start(seedHex string, generation uint64, pskHex string, serverAddr string, transport string, splitTunnel bool, portHopCount int, portHopSpread int) error {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+
 	seedHex = strings.TrimSpace(seedHex)
 	pskHex = strings.TrimSpace(pskHex)
 	serverAddr = strings.TrimSpace(serverAddr)
@@ -123,7 +138,7 @@ func (a *ChimeraApp) start(seedHex string, generation uint64, pskHex string, ser
 		transport = "udp"
 	}
 	if transport != "udp" && transport != "tcp" && transport != "websocket" && transport != "wss" {
-		err := fmt.Errorf("transport 必须是 udp 或 tcp")
+		err := fmt.Errorf("transport 必须是 udp/tcp/websocket/wss")
 		a.setError(err)
 		return err
 	}
@@ -152,6 +167,15 @@ func (a *ChimeraApp) start(seedHex string, generation uint64, pskHex string, ser
 		return err
 	}
 
+	// 保留磁盘/内存中已有的服务器列表与回退 TUN 地址：直接重建 appConfig
+	// 会把 Servers 清空并在保存时写坏配置文件。
+	a.mu.Lock()
+	prev := a.cfg
+	a.mu.Unlock()
+	tunIP := prev.TunIP
+	if tunIP == "" {
+		tunIP = "10.99.0.2"
+	}
 	cfg := appConfig{
 		SeedHex:       seedHex,
 		Generation:    generation,
@@ -161,13 +185,15 @@ func (a *ChimeraApp) start(seedHex string, generation uint64, pskHex string, ser
 		SplitTunnel:   splitTunnel,
 		PortHopCount:  portHopCount,
 		PortHopSpread: portHopSpread,
-		TunIP:         "10.99.0.2",
+		TunIP:         tunIP,
+		Servers:       prev.Servers,
 	}
 
 	a.mu.Lock()
 	a.cfg = cfg
 	a.status = "connecting"
 	a.lastErr = ""
+	a.wantConnected = true
 	a.mu.Unlock()
 
 	// 配置必须先落盘，再启动传输层。
@@ -226,20 +252,44 @@ func (a *ChimeraApp) startWatchdog() {
 				a.mu.Lock()
 				status := a.status
 				cfg := a.cfg
+				want := a.wantConnected
+				retryable := a.wdRetryable
+				lastAttempt := a.wdLastAttempt
 				a.mu.Unlock()
-				if status != "connected" {
+
+				// 用户主动断开后不再自动重连。
+				if !want {
 					continue
 				}
-				idle := linkIdleFor()
-				if idle < linkLostAfter {
+				if status == "connected" {
+					if idle := linkIdleFor(); idle < linkLostAfter {
+						continue
+					}
+					log.Printf("[watchdog] 链路静默，自动重连 server=%s", cfg.ServerAddr)
+				} else if status == "error" && retryable {
+					// watchdog 自己的重连失败：退避 30s 后再试，而不是
+					// 永久停在 error 等用户手动点击。
+					if time.Since(lastAttempt) < 30*time.Second {
+						continue
+					}
+					log.Printf("[watchdog] 重试上次失败的重连 server=%s", cfg.ServerAddr)
+				} else {
 					continue
 				}
-				log.Printf("[watchdog] 链路静默 %v，自动重连 server=%s", idle, cfg.ServerAddr)
+
 				a.mu.Lock()
 				a.status = "connecting"
+				a.wdLastAttempt = time.Now()
 				a.mu.Unlock()
 				if err := a.Start(cfg.SeedHex, cfg.Generation, cfg.PSKHex, cfg.ServerAddr); err != nil {
 					log.Printf("[watchdog] 重连失败: %v", err)
+					a.mu.Lock()
+					a.wdRetryable = true
+					a.mu.Unlock()
+				} else {
+					a.mu.Lock()
+					a.wdRetryable = false
+					a.mu.Unlock()
 				}
 			}
 		}()
@@ -248,6 +298,13 @@ func (a *ChimeraApp) startWatchdog() {
 
 // Stop 停止传输层，但不会退出应用进程（GUI 保持运行）。
 func (a *ChimeraApp) Stop() error {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+
+	a.mu.Lock()
+	a.wantConnected = false
+	a.mu.Unlock()
+
 	stopPacketBridge()
 	if err := stopTransport(); err != nil {
 		a.setError(err)
@@ -505,6 +562,10 @@ func (a *ChimeraApp) loadConfig() error {
 		if _, ok := probe["portHopCount"]; !ok {
 			cfg.PortHopCount = 1
 		}
+	}
+	// 旧配置有 hop count 却没有 spread 时补默认值，否则下次 start 校验失败。
+	if cfg.PortHopCount > 1 && cfg.PortHopSpread <= 0 {
+		cfg.PortHopSpread = 2048
 	}
 
 	a.mu.Lock()

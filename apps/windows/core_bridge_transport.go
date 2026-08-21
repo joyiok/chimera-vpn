@@ -26,7 +26,13 @@ var routeTakeover = bridge.NewRouteTakeover()
 
 // startTransport 使用计划中的 core API 创建并启动客户端。
 // GenerationWindow=2：服务器轮换 generation 后握手超时自动探测 gen+1/gen+2。
+// transport / portHop 参数必须真正传入核心——UI 上选了 tcp/wss 或开启
+// 跳跃时，底层拨号必须随之改变，否则用户以为在 TCP 实际还在 UDP。
 func startTransport(cfg appConfig) error {
+	hopCount, hopSpread := cfg.PortHopCount, cfg.PortHopSpread
+	if hopCount > 1 && hopSpread <= 0 {
+		hopSpread = 2048
+	}
 	client, err := core.NewClient(core.Config{
 		SeedHex:          cfg.SeedHex,
 		Generation:       cfg.Generation,
@@ -34,6 +40,9 @@ func startTransport(cfg appConfig) error {
 		JitterMax:        20 * time.Millisecond,
 		PSKHex:           cfg.PSKHex,
 		ServerAddr:       cfg.ServerAddr,
+		Transport:        cfg.Transport,
+		PortHopCount:     hopCount,
+		PortHopSpread:    hopSpread,
 	})
 	if err != nil {
 		return fmt.Errorf("core.NewClient: %w", err)
@@ -45,7 +54,8 @@ func startTransport(cfg appConfig) error {
 	}
 
 	transportClient = client
-	log.Printf("[coreBridge] 真实传输层已启动：server=%s generation=%d", cfg.ServerAddr, client.Generation())
+	log.Printf("[coreBridge] 真实传输层已启动：server=%s transport=%s generation=%d hop=%d/%d",
+		cfg.ServerAddr, cfg.Transport, client.Generation(), hopCount, hopSpread)
 	return nil
 }
 

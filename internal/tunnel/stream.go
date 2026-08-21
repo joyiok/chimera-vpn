@@ -161,6 +161,7 @@ func selectStreamProtocol(cps []*compiler.CompiledProtocol, psk []byte, data []b
 		return nil, 0, errors.New("no compiled protocol for stream handshake")
 	}
 	var primary, serverFirst *compiler.CompiledProtocol
+	serverFirstIdx := 0
 	for i, cp := range cps {
 		h, err := compiler.NewHandshake(cp, genome.DirServer, psk)
 		if err != nil {
@@ -176,6 +177,7 @@ func selectStreamProtocol(cps []*compiler.CompiledProtocol, psk []byte, data []b
 		if spec.Direction == genome.DirServer {
 			if serverFirst == nil {
 				serverFirst = cp
+				serverFirstIdx = i
 			}
 			continue
 		}
@@ -197,7 +199,7 @@ func selectStreamProtocol(cps []*compiler.CompiledProtocol, psk []byte, data []b
 	if serverFirst != nil {
 		inner, err := compiler.UnwrapHandshakeDatagram(primary.Genome, data)
 		if err == nil && compiler.VerifyKnock(psk, inner) {
-			return serverFirst, 0, nil
+			return serverFirst, uint64(serverFirstIdx), nil
 		}
 	}
 	return nil, 0, errProbe

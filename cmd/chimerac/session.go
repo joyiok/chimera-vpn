@@ -35,7 +35,7 @@ func clientCoreConfig(cfg clientConfig) core.Config {
 	}
 }
 
-func startClient(cfg clientConfig, timeout time.Duration) (*core.Client, string, error) {
+func startClient(ctx context.Context, cfg clientConfig, timeout time.Duration) (*core.Client, string, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
@@ -43,13 +43,13 @@ func startClient(cfg clientConfig, timeout time.Duration) (*core.Client, string,
 	if err != nil {
 		return nil, "", err
 	}
-	if err := c.Start(); err != nil {
+	if err := c.StartContext(ctx); err != nil {
 		_ = c.Close()
 		return nil, "", fmt.Errorf("handshake: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ipCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ip, err := c.AssignedIP(ctx)
+	ip, err := c.AssignedIP(ipCtx)
 	if err != nil {
 		_ = c.Close()
 		return nil, "", fmt.Errorf("assigned IP: %w", err)
