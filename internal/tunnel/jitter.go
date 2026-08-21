@@ -72,9 +72,16 @@ func writeDatagram(conn net.PacketConn, addr net.Addr, frame []byte, jitter time
 }
 
 // writeDatagramAsync is for best-effort control (ACK/keepalive/decoy) so
-// the mux read loop is not stalled by jitter.
+// the mux read loop is not stalled by jitter. With jitter disabled it
+// writes synchronously: a goroutine per frame both spikes scheduling and
+// lets frames arrive out of order, which data-plane ordering tests (and
+// real ACK bookkeeping) should not have to tolerate.
 func writeDatagramAsync(conn net.PacketConn, addr net.Addr, frame []byte, jitter time.Duration) {
 	if conn == nil || addr == nil || len(frame) == 0 || len(frame) > maxDatagram {
+		return
+	}
+	if jitter <= 0 {
+		_, _ = conn.WriteTo(frame, addr)
 		return
 	}
 	cp := append([]byte(nil), frame...)

@@ -30,5 +30,9 @@
   "port_hop_spread": 0,
   "tls_cert_file": "",
   "tls_key_file": "",
-  "shape_buckets": []
+  "shape_buckets": [],
+  "decoy_burst": 1,
+  "transports": [
+    "udp"
+  ]
 }

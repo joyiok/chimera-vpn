@@ -27,6 +27,9 @@ type clientConfig struct {
 	// Derive one from a real-traffic capture with:
 	// chimera-eval -pcap real.pcap -ladder
 	ShapeBuckets []int `json:"shape_buckets"`
+	// Transports are probed in order until one handshakes (udp, tcp,
+	// websocket, wss). Empty = [transport].
+	Transports []string `json:"transports"`
 	// DNSServers overrides the resolvers pushed onto the TUN when route
 	// takeover succeeds (default 1.1.1.1 / 8.8.8.8). Only used with
 	// systemd-resolved; see dns_linux.go.

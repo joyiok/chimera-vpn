@@ -369,6 +369,7 @@ type ServerMux struct {
 	rateLimit    int
 	maxSessions  int
 	decoy        *compiler.CompiledProtocol
+	decoyBurst   int
 	shapeBuckets []int
 	txMask       TxMask
 	jitterMax    time.Duration
@@ -454,6 +455,14 @@ func (m *ServerMux) WithMaxSessions(n int) *ServerMux {
 // real clients will probe (see DecoyGeneration). nil disables decoys.
 func (m *ServerMux) WithDecoy(cp *compiler.CompiledProtocol) *ServerMux {
 	m.decoy = cp
+	return m
+}
+
+// WithDecoyBurst sets how many frames one decoy exchange sends (1 =
+// single reply, the historical behavior; up to 8). Follow-up frames are
+// spaced 30-120ms apart to mimic session downstream cadence.
+func (m *ServerMux) WithDecoyBurst(n int) *ServerMux {
+	m.decoyBurst = n
 	return m
 }
 

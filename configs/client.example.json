@@ -13,5 +13,8 @@
   "portHopSpread": 0,
   "tlsCAFile": "",
   "tlsInsecureSkipVerify": false,
-  "shape_buckets": []
+  "shape_buckets": [],
+  "transports": [
+    "udp"
+  ]
 }

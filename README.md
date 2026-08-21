@@ -68,6 +68,8 @@ The same compiled datagrams ride over multiple underlays:
 - TCP listeners apply configurable unauthenticated-first-frame probe defense: `close`, `silent` (default), or `tls` (standard fatal alert for TLS-looking probes), with timeout and concurrency caps.
 - **Send-side noise mask**: after every N real writes the session emits one cryptographically random decoy frame (rate-capped). Receivers drop decoys via AEAD failure — no shared state.
 - **Port hopping**: the server binds the base port plus HMAC(seed, generation)-derived ports (count 1–16); clients probe the same sequence with a shortened 3s timeout. Works identically for UDP and TCP.
+- **Multi-transport failover**: `transports: ["udp", "tcp", ...]` — servers start every listed listener at once; clients probe the list in order (short 3s probes) and stay on the first that handshakes. Reconnect logic prefers the underlay that most recently worked, so a network that starts throttling UDP fails over to TCP on the next session.
+- **Decoy bursts**: a prober's illegal first packet can be answered with a short burst of decoy frames (1–8, `decoy_burst` in server.json) spaced 30–120ms apart — session-like downstream cadence instead of one canned reply.
 - **Learned shape ladders**: `chimera-eval -pcap real.pcap -ladder` derives a packet-length ladder from a real-traffic capture (p10/p30/p50/p70/p90 quantiles); point `shape_buckets` at it on both ends and the tunnel's length distribution tracks the chosen cover application instead of a hardcoded ladder.
 - Per-genome shape ladders (five padding ladders selected by fingerprint), randomized keepalive intervals (75–125%), larger UDP socket buffers, zeroed ToS/DSCP.
 
@@ -151,7 +153,7 @@ This is **not** a complete anti-censorship system for high-risk environments, bu
 
 1. **On-device testing**: Android `protect(fd)` + VpnService against real networks.
 2. **Lane B**: publish ciphertext fragments via CDN/object storage; clients fetch with human-like browsing behavior.
-3. **Adversarial evaluation**: `cmd/chimera-eval` scores tcpdump pcaps against gfw.report / Wu 2023 first-packet heuristics plus length/IAT statistics. This is the paper-inferred detector, not proof of evading the live GFW; real claims need observation points inside censored networks.
+3. **Adversarial evaluation**: `cmd/chimera-eval` scores tcpdump pcaps against gfw.report / Wu 2023 first-packet heuristics plus length/IAT statistics. This is the paper-inferred detector, not proof of evading the live GFW; real claims need observation points inside censored networks. A red-team CI gate (`TestRedTeamGeneratedFirstDatagramsPassFEP`) generates random protocol species on every test run and fails if any first datagram stops classifying as exempt.
 
 ## Directory layout
 

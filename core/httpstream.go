@@ -63,10 +63,10 @@ func (d *httpDownStream) finish() {
 	d.mu.Unlock()
 }
 
-func (s *Server) startHTTPListeners(ctx context.Context, addrs []string, cps []*compiler.CompiledProtocol, psk []byte) error {
+func (s *Server) startHTTPListeners(ctx context.Context, addrs []string, cps []*compiler.CompiledProtocol, psk []byte, transport string) error {
 	path := websocketPath(s.cfg.SeedHex, s.cfg.Generation)
 	var tlsCfg *tls.Config
-	if s.cfg.Transport == "https" {
+	if transport == "https" {
 		var err error
 		tlsCfg, err = serverTLSConfig(s.cfg)
 		if err != nil {
@@ -102,7 +102,6 @@ func (s *Server) startHTTPListeners(ctx context.Context, addrs []string, cps []*
 			_ = srv.Serve(serveLn)
 		}(s.httpSrvs[i], serveLns[i])
 	}
-	s.tcpAcceptCh = make(chan streamAccept, max(16, len(addrs)*16))
 	s.tcpSessions = make(map[*tunnel.PacketTunnel]struct{})
 	s.httpPairs = make(map[string]*httpSession)
 	s.httpDone = make(chan struct{})

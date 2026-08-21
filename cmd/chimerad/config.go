@@ -46,6 +46,10 @@ type serverConfig struct {
 	// Derive one from a real-traffic capture with:
 	// chimera-eval -pcap real.pcap -ladder
 	ShapeBuckets []int `json:"shape_buckets"`
+	// Transports starts every listed underlay at once (udp, tcp,
+	// websocket, wss, http, https); clients may arrive over any of them.
+	// Empty = [transport].
+	Transports []string `json:"transports"`
 	// TLSCertFile / TLSKeyFile enable transport=wss.
 	TLSCertFile string    `json:"tls_cert_file"`
 	TLSKeyFile  string    `json:"tls_key_file"`
@@ -180,6 +184,7 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		PortHopSpread:         cfg.PortHopSpread,
 		GenerationRotation:    time.Duration(cfg.GenerationRotationSec) * time.Second,
 		ShapeBuckets:          cfg.ShapeBuckets,
+		Transports:            cfg.Transports,
 		TLSCertFile:           cfg.TLSCertFile,
 		TLSKeyFile:            cfg.TLSKeyFile,
 		ClientCIDR:            cfg.ClientCIDR,

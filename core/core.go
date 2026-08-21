@@ -62,6 +62,11 @@ type Config struct {
 	// window live, and pushes the new base to connected clients via
 	// ControlGeneration. 0 disables rotation.
 	GenerationRotation time.Duration
+	// Transports lists the underlays to serve (server) or probe in order
+	// (client): udp, tcp, websocket, wss, http, https. Empty = [Transport].
+	// Servers start every listed listener; clients walk the list and stay
+	// on the first that handshakes.
+	Transports []string
 	// TLSCertFile / TLSKeyFile enable wss on the server.
 	TLSCertFile string
 	TLSKeyFile  string
@@ -96,6 +101,11 @@ type Config struct {
 	// are on by default: illegal first packets get a frame of a disjoint
 	// generated protocol, rate-limited per source and globally.
 	DisableDecoy bool
+	// DecoyBurst (server) is how many frames one decoy exchange sends.
+	// 0/1 = single reply; up to 8. Follow-up frames are spaced 30-120ms
+	// apart so an active prober sees session-like downstream cadence
+	// instead of one canned reply.
+	DecoyBurst int
 	// DisableShape turns off datagram length shaping (default: pad frames
 	// to compiler.DefaultShapeBuckets).
 	DisableShape bool
@@ -137,6 +147,34 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	if cfg.Transport != "udp" && cfg.Transport != "tcp" && cfg.Transport != "websocket" && cfg.Transport != "wss" && cfg.Transport != "http" && cfg.Transport != "https" {
 		return cfg, fmt.Errorf("unknown transport %q (want udp, tcp, websocket, wss, http, or https)", cfg.Transport)
 	}
+	if len(cfg.Transports) == 0 {
+		cfg.Transports = []string{cfg.Transport}
+	}
+	var transports []string
+	for _, tr := range cfg.Transports {
+		tr = strings.ToLower(strings.TrimSpace(tr))
+		if tr == "" {
+			continue
+		}
+		if tr != "udp" && tr != "tcp" && tr != "websocket" && tr != "wss" && tr != "http" && tr != "https" {
+			return cfg, fmt.Errorf("unknown transport %q in transports (want udp, tcp, websocket, wss, http, or https)", tr)
+		}
+		dup := false
+		for _, seen := range transports {
+			if seen == tr {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			transports = append(transports, tr)
+		}
+	}
+	if len(transports) == 0 {
+		transports = []string{cfg.Transport}
+	}
+	cfg.Transports = transports
+	cfg.Transport = transports[0]
 	cfg.StreamDecoyMode, err = tunnel.NormalizeStreamProbeMode(cfg.StreamDecoyMode)
 	if err != nil {
 		return cfg, err
@@ -171,6 +209,15 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.GenerationRotation < 0 {
 		cfg.GenerationRotation = 0
+	}
+	if cfg.DecoyBurst < 0 {
+		cfg.DecoyBurst = 1
+	}
+	if cfg.DecoyBurst == 0 {
+		cfg.DecoyBurst = 1
+	}
+	if cfg.DecoyBurst > 8 {
+		cfg.DecoyBurst = 8
 	}
 	if len(cfg.ShapeBuckets) > 0 {
 		if len(cfg.ShapeBuckets) > 16 {
@@ -229,6 +276,9 @@ type Client struct {
 	// (ControlGeneration). Reconnects dial the new base directly instead
 	// of re-probing the whole window.
 	genBase atomic.Uint64
+	// workingTransport is the underlay the current session established
+	// over (multi-transport probing).
+	workingTransport atomic.Value
 }
 
 // NewClient prepares a client; Start establishes the tunnel.
@@ -260,41 +310,66 @@ func (c *Client) StartContext(ctx context.Context) error {
 	}
 
 	window := c.cfg.GenerationWindow
+	transports := c.cfg.Transports
+	if len(transports) == 0 {
+		transports = []string{c.cfg.Transport}
+	}
+	// With several transports the whole sweep must stay bounded: every
+	// (transport, generation) probe uses the short hop timeout instead of
+	// the full 8s handshake timeout.
+	probeTimeout := time.Duration(0)
+	if len(transports) > 1 {
+		probeTimeout = tunnel.PortHopHandshakeTimeout
+	}
 	var lastErr error
-	for attempt := uint64(0); attempt <= window; attempt++ {
-		if err := ctx.Err(); err != nil {
-			if lastErr == nil {
-				lastErr = err
-			}
-			return lastErr
-		}
-		gen := c.BaseGeneration() + attempt
-		tun, conn, err := startSessionCtx(ctx, c.cfg, gen)
-		if err == nil {
-			c.conn = conn
-			c.tun = tun
-			c.gen = gen
-			// Track server-pushed generation rotation so reconnects dial
-			// the new base directly.
-			tun.SetOnGeneration(func(g uint64) {
-				for {
-					cur := c.genBase.Load()
-					if g <= cur || c.genBase.CompareAndSwap(cur, g) {
-						return
-					}
+	for _, tr := range transports {
+		for attempt := uint64(0); attempt <= window; attempt++ {
+			if err := ctx.Err(); err != nil {
+				if lastErr == nil {
+					lastErr = err
 				}
-			})
-			if pushed := tun.RemoteGeneration(); pushed > c.genBase.Load() {
-				c.genBase.Store(pushed)
+				return lastErr
 			}
-			return nil
-		}
-		lastErr = err
-		if !errors.Is(err, tunnel.ErrHandshakeTimeout) {
-			return err // configuration or network error: probing won't help
+			attemptCfg := c.cfg
+			attemptCfg.Transport = tr
+			gen := c.BaseGeneration() + attempt
+			tun, conn, err := startSessionCtxWithTimeout(ctx, attemptCfg, gen, probeTimeout)
+			if err == nil {
+				c.conn = conn
+				c.tun = tun
+				c.gen = gen
+				c.workingTransport.Store(tr)
+				// Track server-pushed generation rotation so reconnects dial
+				// the new base directly.
+				tun.SetOnGeneration(func(g uint64) {
+					for {
+						cur := c.genBase.Load()
+						if g <= cur || c.genBase.CompareAndSwap(cur, g) {
+							return
+						}
+					}
+				})
+				if pushed := tun.RemoteGeneration(); pushed > c.genBase.Load() {
+					c.genBase.Store(pushed)
+				}
+				return nil
+			}
+			lastErr = err
+			if !errors.Is(err, tunnel.ErrHandshakeTimeout) {
+				break // this transport is misconfigured/unreachable: try the next one
+			}
 		}
 	}
 	return lastErr
+}
+
+// WorkingTransport returns the transport the current session actually
+// established over ("" before Start). Reconnect logic prefers it.
+func (c *Client) WorkingTransport() string {
+	if tr, ok := c.workingTransport.Load().(string); ok {
+		return tr
+	}
+	return ""
 }
 
 // BaseGeneration returns the generation future handshakes should start
@@ -310,10 +385,13 @@ func (c *Client) BaseGeneration() uint64 {
 // genome, handshake. Dead derived ports are skipped quickly; the first
 // working port becomes the session endpoint.
 func startSession(cfg Config, generation uint64) (*tunnel.PacketTunnel, net.PacketConn, error) {
-	return startSessionCtx(context.Background(), cfg, generation)
+	return startSessionCtxWithTimeout(context.Background(), cfg, generation, 0)
 }
 
-func startSessionCtx(ctx context.Context, cfg Config, generation uint64) (*tunnel.PacketTunnel, net.PacketConn, error) {
+// startSessionCtxWithTimeout dials the derived port list for one
+// generation. timeoutOverride > 0 bounds every handshake (multi-transport
+// probing); 0 keeps the automatic per-port timeout.
+func startSessionCtxWithTimeout(ctx context.Context, cfg Config, generation uint64, timeoutOverride time.Duration) (*tunnel.PacketTunnel, net.PacketConn, error) {
 	addrs, err := hopAddrsForConfig(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -321,6 +399,9 @@ func startSessionCtx(ctx context.Context, cfg Config, generation uint64) (*tunne
 	timeout := time.Duration(0) // single port: keep the standard 8s handshake timeout
 	if len(addrs) > 1 {
 		timeout = tunnel.PortHopHandshakeTimeout
+	}
+	if timeoutOverride > 0 && (timeout == 0 || timeoutOverride < timeout) {
+		timeout = timeoutOverride
 	}
 	var lastErr error
 	for _, addr := range addrs {
@@ -565,9 +646,9 @@ type serverSession interface {
 	Close() error
 }
 
-// streamAccept is a completed TCP handshake waiting for Server.Accept.
+// streamAccept is a completed handshake waiting for Server.Accept.
 type streamAccept struct {
-	t          *tunnel.PacketTunnel
+	t          serverSession
 	generation uint64
 }
 
@@ -590,7 +671,8 @@ type Server struct {
 	httpSrvs    []*http.Server
 	httpDone    chan struct{}
 	httpPairs   map[string]*httpSession
-	tcpAcceptCh chan streamAccept
+	tcpAcceptCh chan streamAccept // legacy single-transport channel (unused with multi-transport)
+	acceptCh    chan streamAccept // unified accept queue for all transports
 	tcpDone     chan struct{}
 	tcpSessions map[*tunnel.PacketTunnel]struct{}
 	tcpDecoys   atomic.Int64
@@ -683,23 +765,52 @@ func (s *Server) Start() error {
 	s.currentCPS.Store(&cps)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+	s.acceptCh = make(chan streamAccept, 32)
 
 	var err2 error
-	if s.cfg.Transport == "tcp" {
-		err2 = s.startTCPListeners(ctx, addrs, cps, psk)
-	} else if s.cfg.Transport == "websocket" || s.cfg.Transport == "wss" {
-		err2 = s.startWebSocketListeners(ctx, addrs, cps, psk)
-	} else if s.cfg.Transport == "http" || s.cfg.Transport == "https" {
-		err2 = s.startHTTPListeners(ctx, addrs, cps, psk)
-	} else {
-		err2 = s.startUDPMuxes(ctx, addrs, cps, psk)
-	}
-	if err2 != nil {
-		return err2
+	for _, tr := range s.cfg.Transports {
+		switch tr {
+		case "tcp":
+			err2 = s.startTCPListeners(ctx, addrs, cps, psk)
+		case "websocket", "wss":
+			err2 = s.startWebSocketListeners(ctx, addrs, cps, psk, tr)
+		case "http", "https":
+			err2 = s.startHTTPListeners(ctx, addrs, cps, psk, tr)
+		default:
+			err2 = s.startUDPMuxes(ctx, addrs, cps, psk)
+		}
+		if err2 != nil {
+			s.rollbackTransports()
+			return err2
+		}
 	}
 	// Listeners are live: observation and defense loops can start.
 	s.startImmuneLoops(ctx)
 	return nil
+}
+
+// rollbackTransports tears down every listener started so far when one
+// transport fails to bind (e.g. udp ok but tcp port taken).
+func (s *Server) rollbackTransports() {
+	for _, c := range s.conns {
+		_ = c.Close()
+	}
+	for _, l := range s.tcpLns {
+		_ = l.Close()
+	}
+	for _, srv := range s.wsSrvs {
+		_ = srv.Close()
+	}
+	for _, ln := range s.wsLns {
+		_ = ln.Close()
+	}
+	for _, srv := range s.httpSrvs {
+		_ = srv.Close()
+	}
+	for _, ln := range s.httpLns {
+		_ = ln.Close()
+	}
+	s.cancel()
 }
 
 func (s *Server) newMux(conn net.PacketConn, cps []*compiler.CompiledProtocol, psk []byte) *tunnel.ServerMux {
@@ -717,6 +828,7 @@ func (s *Server) newMux(conn net.PacketConn, cps []*compiler.CompiledProtocol, p
 		mux.WithShapeBuckets(txShapeBuckets)
 	}
 	mux.WithTxMask(tunnel.NewNoiseTxMask(s.cfg.DecoyEvery, s.cfg.DecoyMaxPerSec, txShapeBuckets))
+	mux.WithDecoyBurst(s.cfg.DecoyBurst)
 	if !s.cfg.DisableDecoy {
 		seed, _ := parseHex32(s.cfg.SeedHex, "seed")
 		if dg, err := genome.GenerateWithCipher(seed, tunnel.DecoyGeneration(s.cfg.Generation), s.cfg.Cipher); err == nil {
@@ -730,7 +842,6 @@ func (s *Server) newMux(conn net.PacketConn, cps []*compiler.CompiledProtocol, p
 }
 
 func (s *Server) startUDPMuxes(ctx context.Context, addrs []string, cps []*compiler.CompiledProtocol, psk []byte) error {
-	s.muxAcceptCh = make(chan *tunnel.ServerTunnel, 32)
 	s.done = make(chan struct{})
 	var wg sync.WaitGroup
 	for _, addr := range addrs {
@@ -760,7 +871,7 @@ func (s *Server) startUDPMuxes(ctx context.Context, addrs []string, cps []*compi
 					return
 				}
 				select {
-				case s.muxAcceptCh <- tun:
+				case s.acceptCh <- streamAccept{t: tun, generation: tun.Generation()}:
 				case <-ctx.Done():
 					_ = tun.Close()
 					return
@@ -789,7 +900,6 @@ func (s *Server) startTCPListeners(ctx context.Context, addrs []string, cps []*c
 		}
 		s.tcpLns = append(s.tcpLns, ln)
 	}
-	s.tcpAcceptCh = make(chan streamAccept, max(16, len(addrs)*16))
 	s.tcpDone = make(chan struct{})
 	s.tcpSessions = make(map[*tunnel.PacketTunnel]struct{})
 	var wg sync.WaitGroup
@@ -807,10 +917,10 @@ func (s *Server) startTCPListeners(ctx context.Context, addrs []string, cps []*c
 	return nil
 }
 
-func (s *Server) startWebSocketListeners(ctx context.Context, addrs []string, cps []*compiler.CompiledProtocol, psk []byte) error {
+func (s *Server) startWebSocketListeners(ctx context.Context, addrs []string, cps []*compiler.CompiledProtocol, psk []byte, transport string) error {
 	path := websocketPath(s.cfg.SeedHex, s.cfg.Generation)
 	var tlsCfg *tls.Config
-	if s.cfg.Transport == "wss" {
+	if transport == "wss" {
 		var err error
 		tlsCfg, err = serverTLSConfig(s.cfg)
 		if err != nil {
@@ -840,8 +950,6 @@ func (s *Server) startWebSocketListeners(ctx context.Context, addrs []string, cp
 			_ = srv.Serve(serveLn)
 		}(srv, serveLn)
 	}
-	s.tcpAcceptCh = make(chan streamAccept, max(16, len(addrs)*16))
-	s.tcpSessions = make(map[*tunnel.PacketTunnel]struct{})
 	s.wsDone = make(chan struct{})
 	go func() {
 		<-ctx.Done()
@@ -938,7 +1046,7 @@ func (s *Server) handleStreamConn(ctx context.Context, conn net.Conn, cps []*com
 	s.mu.Unlock()
 
 	select {
-	case s.tcpAcceptCh <- streamAccept{t: t, generation: generation}:
+	case s.acceptCh <- streamAccept{t: t, generation: generation}:
 	case <-ctx.Done():
 		s.unregisterStream(t)
 		_ = t.Close()
@@ -952,29 +1060,18 @@ func (s *Server) unregisterStream(t *tunnel.PacketTunnel) {
 }
 
 // Accept returns the next client whose generated handshake completed.
+// With multiple configured transports every listener feeds the same
+// accept queue, so a client may arrive over any of them.
 func (s *Server) Accept(ctx context.Context) (*Conn, error) {
 	s.mu.Lock()
-	if s.cfg.Transport == "tcp" || s.cfg.Transport == "websocket" || s.cfg.Transport == "wss" || s.cfg.Transport == "http" || s.cfg.Transport == "https" {
-		ch := s.tcpAcceptCh
-		s.mu.Unlock()
-		if ch == nil {
-			return nil, errors.New("server not started")
-		}
-		select {
-		case a := <-ch:
-			return s.makeConn(a.t, a.generation)
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	ch := s.muxAcceptCh
+	ch := s.acceptCh
 	s.mu.Unlock()
 	if ch == nil {
 		return nil, errors.New("server not started")
 	}
 	select {
-	case t := <-ch:
-		return s.makeConn(t, t.Generation())
+	case a := <-ch:
+		return s.makeConn(a.t, a.generation)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -999,11 +1096,11 @@ func (s *Server) makeConn(t serverSession, generation uint64) (*Conn, error) {
 		conn.assignedIP = ip
 		conn.release = func() { s.pool.Release(ip) }
 	}
-	if s.cfg.Transport == "tcp" {
-		pt, ok := t.(*tunnel.PacketTunnel)
-		if ok {
-			conn.onClose = func() { s.unregisterStream(pt) }
-		}
+	// Stream transports (tcp/websocket/wss/http/https) register their
+	// PacketTunnel for teardown tracking and idle reaping; UDP sessions
+	// are managed by the mux sweep.
+	if pt, ok := t.(*tunnel.PacketTunnel); ok {
+		conn.onClose = func() { s.unregisterStream(pt) }
 		if s.cfg.IdleTimeout > 0 {
 			go conn.reapIdle(s.cfg.IdleTimeout)
 		}

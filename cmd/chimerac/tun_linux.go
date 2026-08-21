@@ -137,9 +137,13 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 				return nil
 			}
 			backoff = nextBackoff(backoff)
-			// Carry over any server-pushed generation rotation so the new
-			// session dials the current base instead of re-probing.
+			// Carry over rotation and the last working transport so the
+			// new session dials the current base over the underlay that
+			// most recently worked.
 			if cur := current.Load(); cur != nil {
+				if tr := cur.WorkingTransport(); tr != "" {
+					cfg.Transport = tr
+				}
 				if g := cur.BaseGeneration(); g > cfg.Generation {
 					log.Printf("adopting rotated generation %d", g)
 					cfg.Generation = g
