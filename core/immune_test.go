@@ -42,9 +42,53 @@ func TestShapeBucketsOverride(t *testing.T) {
 	}
 }
 
-// TestResolveShapeLadder pins the preference order: explicit override wins
-// over the genome ladder; empty falls back.
+// TestImmuneDeescalationRestoresProbeMode: after escalation, two calm
+// evaluation windows must restore the configured probe defense.
+func TestImmuneDeescalationRestoresProbeMode(t *testing.T) {
+	srvCfg := testConfig("127.0.0.1:0", "tcp")
+	srvCfg.StreamDecoyMode = tunnel.StreamProbeSilent
+	srv, err := NewServer(srvCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	for i := 0; i < 10; i++ {
+		c, err := net.Dial("tcp", srv.LocalAddr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = c.Write([]byte("junk"))
+		_ = c.Close()
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if lvl := srv.evaluateThreat(); lvl < ThreatElevated {
+		t.Fatalf("threat = %d, want escalated", lvl)
+	}
+	if got := srv.ProbeMode(); got != tunnel.StreamProbeTLS {
+		t.Fatalf("probe mode = %s, want tls", got)
+	}
+
+	// Two calm windows (counters were swapped to zero by the escalation
+	// evaluation) must restore the configured mode.
+	srv.evaluateThreat()
+	srv.evaluateThreat()
+	srv.deescalate()
+	if got := srv.ProbeMode(); got != tunnel.StreamProbeSilent {
+		t.Fatalf("probe mode = %s after de-escalation, want silent", got)
+	}
+	if srv.ThreatLevel() != ThreatCalm && srv.ThreatLevel() > ThreatElevated {
+		t.Fatalf("threat level stuck at %d", srv.ThreatLevel())
+	}
+}
+
 func TestResolveShapeLadder(t *testing.T) {
+	// TestResolveShapeLadder pins the preference order: explicit override
+	// wins over the genome ladder; empty falls back.
 	cfg := Config{ShapeBuckets: []int{128}}
 	if got := cfg.resolveShapeLadder([]int{999}); !reflect.DeepEqual(got, []int{128}) {
 		t.Fatalf("override ignored: %v", got)

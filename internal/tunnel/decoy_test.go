@@ -102,6 +102,60 @@ func TestDecoyRepliesToClientFirstProbe(t *testing.T) {
 	}
 }
 
+// TestDecoyBurstSendsMultipleFrames verifies burst mode: one probe draws
+// a scheduled exchange of decoy frames (first reply + follow-ups spaced
+// 30-120ms apart) instead of a single canned response.
+func TestDecoyBurstSendsMultipleFrames(t *testing.T) {
+	_, seed, psk, cp := clientFirstProtocol(t, 7000)
+	dcp := compileDecoy(t, seed, psk, 0)
+
+	probe := make([]byte, 512)
+	for i := range probe {
+		probe[i] = 0x41
+	}
+
+	serverConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mux := NewServerMux(serverConn, cp, psk).WithDecoy(dcp).WithDecoyBurst(3)
+	go mux.Run(ctx)
+
+	clientConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	if _, err := clientConn.WriteTo(probe, serverConn.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+
+	received := 0
+	deadline := time.Now().Add(800 * time.Millisecond)
+	clientConn.SetReadDeadline(deadline)
+	buf := make([]byte, 2048)
+	for time.Now().Before(deadline) {
+		n, _, err := clientConn.ReadFrom(buf)
+		if err != nil {
+			break
+		}
+		if n > 0 {
+			received++
+		}
+		if received >= 3 {
+			break
+		}
+	}
+	if received < 2 {
+		t.Fatalf("burst sent %d decoy frames, want >= 2 (single-reply legacy behavior)", received)
+	}
+}
+
 func TestMaxSessionsDropsExtraClients(t *testing.T) {
 	g, err := genome.Generate(seedFor(7100), 0)
 	if err != nil {
