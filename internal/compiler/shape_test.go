@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"testing"
 
 	"chimera/internal/genome"
@@ -60,5 +61,33 @@ func TestPacketLengthShapeHitsBuckets(t *testing.T) {
 	}
 	if string(msg.Payload) != string(payload) {
 		t.Fatalf("payload mismatch after shaping: %v", msg.Payload)
+	}
+}
+
+func TestShapeBucketsAreSpeciesDerived(t *testing.T) {
+	seen := map[string]int{}
+	var ladders []string
+	for i := 0; i < 24; i++ {
+		g, err := genome.Generate(packetSeed(500+i), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := ShapeBucketsForGenome(g)
+		if len(b) == 0 {
+			t.Fatalf("seed %d: empty ladder", i)
+		}
+		for j := 1; j < len(b); j++ {
+			if b[j] <= b[j-1] {
+				t.Fatalf("seed %d: ladder not sorted: %v", i, b)
+			}
+		}
+		key := fmt.Sprint(b)
+		if seen[key] == 0 {
+			ladders = append(ladders, key)
+		}
+		seen[key]++
+	}
+	if len(ladders) < 2 {
+		t.Fatalf("shape ladder is not diversified across species: %d ladder(s)", len(ladders))
 	}
 }

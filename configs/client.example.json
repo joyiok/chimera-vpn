@@ -6,5 +6,10 @@
   "cipher": "",
   "tunName": "chimerac0",
   "mtu": 1400,
-  "takeDefaultRoute": true
+  "takeDefaultRoute": true,
+  "transport": "udp",
+  "portHopCount": 1,
+  "portHopSpread": 0,
+  "tlsCAFile": "",
+  "tlsInsecureSkipVerify": false
 }

@@ -5,7 +5,7 @@ package bridge
 import "errors"
 
 // Install is Windows-only: route takeover needs netsh + IP Helper.
-func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string) error {
+func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate bool) error {
 	return errors.New("route takeover is only available on Windows")
 }
 

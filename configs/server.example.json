@@ -18,5 +18,15 @@
     "name": "chimera0",
     "address": "10.99.0.1/24",
     "mtu": 1400
-  }
+  },
+  "transport": "udp",
+  "stream_decoy_mode": "silent",
+  "stream_decoy_timeout_sec": 5,
+  "stream_decoy_max_pending": 256,
+  "decoy_every": 48,
+  "decoy_max_per_sec": 2,
+  "port_hop_count": 1,
+  "port_hop_spread": 0,
+  "tls_cert_file": "",
+  "tls_key_file": ""
 }

@@ -19,12 +19,32 @@ type tunConfig struct {
 }
 
 type serverConfig struct {
-	Listen     string    `json:"listen"`
-	SeedHex    string    `json:"seed_hex"`
-	Generation uint64    `json:"generation"`
-	PSKHex     string    `json:"psk_hex"`
-	ClientCIDR string    `json:"client_cidr"`
-	Tun        tunConfig `json:"tun"`
+	Listen    string `json:"listen"`
+	Transport string `json:"transport"`
+	// StreamDecoyMode applies only to TCP listeners: close, silent, tls.
+	StreamDecoyMode string `json:"stream_decoy_mode"`
+	// StreamDecoyTimeoutSec bounds one silent decoy connection.
+	StreamDecoyTimeoutSec int `json:"stream_decoy_timeout_sec"`
+	// StreamDecoyMaxPending caps concurrent unauthenticated TCP conns.
+	StreamDecoyMaxPending int `json:"stream_decoy_max_pending"`
+	// DecoyEvery emits one high-entropy noise frame every N real writes
+	// on established sessions (0 = default 48, negative = disable).
+	DecoyEvery int `json:"decoy_every"`
+	// DecoyMaxPerSec caps noise frames per second per session direction.
+	DecoyMaxPerSec int `json:"decoy_max_per_sec"`
+	// PortHopCount derives additional listen ports from seed+generation
+	// (1 disables hopping; clients must use the same count).
+	PortHopCount int `json:"port_hop_count"`
+	// PortHopSpread bounds derived port offsets from the listen port.
+	PortHopSpread int `json:"port_hop_spread"`
+	// TLSCertFile / TLSKeyFile enable transport=wss.
+	TLSCertFile string    `json:"tls_cert_file"`
+	TLSKeyFile  string    `json:"tls_key_file"`
+	SeedHex     string    `json:"seed_hex"`
+	Generation  uint64    `json:"generation"`
+	PSKHex      string    `json:"psk_hex"`
+	ClientCIDR  string    `json:"client_cidr"`
+	Tun         tunConfig `json:"tun"`
 
 	// Cipher overrides the genome cipher draw ("" = default). Both
 	// endpoints must agree; e.g. "chacha20-poly1305".
@@ -59,14 +79,22 @@ type serverConfig struct {
 func defaultConfig() serverConfig {
 	replay := "/var/lib/chimera/handshake.replay"
 	return serverConfig{
-		Listen:         "0.0.0.0:4789",
-		ClientCIDR:     "10.99.0.0/24",
-		KeepaliveSec:   25,
-		IdleTimeoutSec: 180,
-		MaxSessions:    256,
-		JitterMS:       20,
-		ReplayPath:     &replay,
-		Tun:            tunConfig{Name: "chimera0", Address: "10.99.0.1/24", MTU: 1400},
+		Listen:                "0.0.0.0:4789",
+		Transport:             "udp",
+		StreamDecoyMode:       "silent",
+		StreamDecoyTimeoutSec: 5,
+		StreamDecoyMaxPending: 256,
+		DecoyEvery:            48,
+		DecoyMaxPerSec:        2,
+		PortHopCount:          1,
+		PortHopSpread:         0,
+		ClientCIDR:            "10.99.0.0/24",
+		KeepaliveSec:          25,
+		IdleTimeoutSec:        180,
+		MaxSessions:           256,
+		JitterMS:              20,
+		ReplayPath:            &replay,
+		Tun:                   tunConfig{Name: "chimera0", Address: "10.99.0.1/24", MTU: 1400},
 	}
 }
 
@@ -128,21 +156,31 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		replay = *cfg.ReplayPath
 	}
 	return core.Config{
-		SeedHex:              cfg.SeedHex,
-		Generation:           cfg.Generation,
-		GenerationWindow:     window,
-		PSKHex:               cfg.PSKHex,
-		ServerAddr:           cfg.Listen,
-		ClientCIDR:           cfg.ClientCIDR,
-		Cipher:               cfg.Cipher,
-		KeepaliveInterval:    time.Duration(cfg.KeepaliveSec) * time.Second,
-		IdleTimeout:          time.Duration(cfg.IdleTimeoutSec) * time.Second,
-		RateLimitBytesPerSec: cfg.RateLimitKBps * 1024,
-		MaxSessions:          cfg.MaxSessions,
-		DisableDecoy:         cfg.DisableDecoy,
-		DisableShape:         cfg.DisableShape,
-		JitterMax:            jitter,
-		ReplayPath:           replay,
+		SeedHex:               cfg.SeedHex,
+		Generation:            cfg.Generation,
+		GenerationWindow:      window,
+		PSKHex:                cfg.PSKHex,
+		ServerAddr:            cfg.Listen,
+		Transport:             cfg.Transport,
+		StreamDecoyMode:       tunnel.StreamProbeMode(cfg.StreamDecoyMode),
+		StreamDecoyTimeout:    time.Duration(cfg.StreamDecoyTimeoutSec) * time.Second,
+		StreamDecoyMaxPending: cfg.StreamDecoyMaxPending,
+		DecoyEvery:            cfg.DecoyEvery,
+		DecoyMaxPerSec:        cfg.DecoyMaxPerSec,
+		PortHopCount:          cfg.PortHopCount,
+		PortHopSpread:         cfg.PortHopSpread,
+		TLSCertFile:           cfg.TLSCertFile,
+		TLSKeyFile:            cfg.TLSKeyFile,
+		ClientCIDR:            cfg.ClientCIDR,
+		Cipher:                cfg.Cipher,
+		KeepaliveInterval:     time.Duration(cfg.KeepaliveSec) * time.Second,
+		IdleTimeout:           time.Duration(cfg.IdleTimeoutSec) * time.Second,
+		RateLimitBytesPerSec:  cfg.RateLimitKBps * 1024,
+		MaxSessions:           cfg.MaxSessions,
+		DisableDecoy:          cfg.DisableDecoy,
+		DisableShape:          cfg.DisableShape,
+		JitterMax:             jitter,
+		ReplayPath:            replay,
 	}, nil
 }
 

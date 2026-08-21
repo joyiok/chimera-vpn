@@ -40,13 +40,44 @@ object GoBind {
 
     fun start(seedHex: String, generation: Long, pskHex: String, serverAddr: String): Long {
         val result = invokeStatic("start", seedHex, generation, pskHex, serverAddr)
-        return when (result) {
-            is Long -> result
-            is Int -> result.toLong()
-            is Number -> result.toLong()
-            null -> throw IllegalStateException("GoBind.start 返回 null")
-            else -> throw IllegalStateException("GoBind.start 返回类型异常: ${result.javaClass.name}")
-        }
+        return normalizeHandle(result, "start")
+    }
+
+    /** TCP/UDP + 端口跳跃；旧 AAR 没有此方法时会抛出 NoSuchMethodException。 */
+    fun startTransportWithHop(
+        seedHex: String,
+        generation: Long,
+        pskHex: String,
+        serverAddr: String,
+        transport: String,
+        hopCount: Int,
+        hopSpread: Int
+    ): Long {
+        val result = invokeStatic(
+            "startTransportWithHop",
+            seedHex, generation, pskHex, serverAddr, transport, hopCount.toLong(), hopSpread.toLong()
+        )
+        return normalizeHandle(result, "startTransportWithHop")
+    }
+
+    /** TCP/UDP 传输选择；旧 AAR 没有此方法时会抛出 NoSuchMethodException。 */
+    fun startTransport(
+        seedHex: String,
+        generation: Long,
+        pskHex: String,
+        serverAddr: String,
+        transport: String
+    ): Long {
+        val result = invokeStatic("startTransport", seedHex, generation, pskHex, serverAddr, transport)
+        return normalizeHandle(result, "startTransport")
+    }
+
+    private fun normalizeHandle(result: Any?, method: String): Long = when (result) {
+        is Long -> result
+        is Int -> result.toLong()
+        is Number -> result.toLong()
+        null -> throw IllegalStateException("GoBind.$method 返回 null")
+        else -> throw IllegalStateException("GoBind.$method 返回类型异常: ${result.javaClass.name}")
     }
 
     fun assignedIP(handle: Long): String? {

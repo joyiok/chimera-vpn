@@ -24,6 +24,25 @@ const (
 	tunHalfRouteB = "128.0.0.0/1"
 )
 
+// privateBypassRoutes are pinned to the physical adapter in split mode so
+// LAN and other non-public destinations never enter the tunnel.
+var privateBypassRoutes = []string{
+	"0.0.0.0/8",
+	"10.0.0.0/8",
+	"100.64.0.0/10",
+	"127.0.0.0/8",
+	"169.254.0.0/16",
+	"172.16.0.0/12",
+	"192.0.0.0/24",
+	"192.0.2.0/24",
+	"192.168.0.0/16",
+	"198.18.0.0/15",
+	"198.51.100.0/24",
+	"203.0.113.0/24",
+	"224.0.0.0/4",
+	"240.0.0.0/4",
+}
+
 // adapterInfo is the subset of OS adapter facts route takeover needs; the
 // windows layer fills it from GetAdaptersAddresses.
 type adapterInfo struct {

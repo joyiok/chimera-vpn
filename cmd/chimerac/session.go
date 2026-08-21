@@ -19,14 +19,19 @@ type vpnOptions struct {
 
 func clientCoreConfig(cfg clientConfig) core.Config {
 	return core.Config{
-		SeedHex:           cfg.SeedHex,
-		Generation:        cfg.Generation,
-		GenerationWindow:  2,
-		JitterMax:         tunnel.DefaultJitterMax,
-		PSKHex:            cfg.PSKHex,
-		ServerAddr:        cfg.ServerAddr,
-		Cipher:            cfg.Cipher,
-		KeepaliveInterval: 25 * time.Second,
+		SeedHex:               cfg.SeedHex,
+		Generation:            cfg.Generation,
+		GenerationWindow:      2,
+		JitterMax:             tunnel.DefaultJitterMax,
+		PSKHex:                cfg.PSKHex,
+		ServerAddr:            cfg.ServerAddr,
+		Transport:             cfg.Transport,
+		PortHopCount:          cfg.PortHopCount,
+		PortHopSpread:         cfg.PortHopSpread,
+		TLSCAFile:             cfg.TLSCAFile,
+		TLSInsecureSkipVerify: cfg.TLSInsecure,
+		Cipher:                cfg.Cipher,
+		KeepaliveInterval:     25 * time.Second,
 	}
 }
 

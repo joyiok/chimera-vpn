@@ -10,6 +10,10 @@ object ClientPrefs {
     const val GENERATION = "generation"
     const val PSK = "psk"
     const val TUN_IP = "tun_ip"
+    const val TRANSPORT = "transport"
+    const val SPLIT_TUNNEL = "split_tunnel"
+    const val PORT_HOP_COUNT = "port_hop_count"
+    const val PORT_HOP_SPREAD = "port_hop_spread"
     private const val SERVERS = "servers"
 
     fun load(context: Context): ChimeraVpnService.VpnConfig? {
@@ -23,7 +27,11 @@ object ClientPrefs {
             seedHex = seed,
             generation = p.getString(GENERATION, "0")?.toLongOrNull() ?: 0L,
             pskHex = psk,
-            tunIp = p.getString(TUN_IP, "10.99.0.2").orEmpty().ifBlank { "10.99.0.2" }
+            tunIp = p.getString(TUN_IP, "10.99.0.2").orEmpty().ifBlank { "10.99.0.2" },
+            transport = p.getString(TRANSPORT, "udp").orEmpty().ifBlank { "udp" },
+            splitTunnel = p.getBoolean(SPLIT_TUNNEL, true),
+            portHopCount = p.getInt(PORT_HOP_COUNT, 1),
+            portHopSpread = p.getInt(PORT_HOP_SPREAD, 0)
         )
     }
 
@@ -34,6 +42,10 @@ object ClientPrefs {
             .putString(GENERATION, config.generation.toString())
             .putString(PSK, config.pskHex)
             .putString(TUN_IP, config.tunIp)
+            .putString(TRANSPORT, config.transport)
+            .putBoolean(SPLIT_TUNNEL, config.splitTunnel)
+            .putInt(PORT_HOP_COUNT, config.portHopCount)
+            .putInt(PORT_HOP_SPREAD, config.portHopSpread)
             .apply()
         if (servers(context).none { it.second.equals(config.serverAddr, ignoreCase = true) }) {
             saveServer(context, config.serverAddr, config.serverAddr)

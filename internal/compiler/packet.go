@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -238,6 +239,30 @@ func (p *PacketSession) AdvanceBaseTo(target uint64) error {
 // already larger than the last rung are left alone so we never force
 // UDP fragmentation just to hit a bucket.
 var DefaultShapeBuckets = []int{128, 512, 1024, 1452}
+
+// shapeLadders are alternative send-side padding ladders. Every protocol
+// species picks one from its fingerprint, so a classifier cannot learn a
+// single global "CHIMERA length ladder". Receivers do not need the ladder:
+// padding is self-describing inside the encrypted body.
+var shapeLadders = [][]int{
+	{96, 384, 768, 1392},
+	{160, 576, 1152, 1400},
+	{192, 448, 896, 1452},
+	{128, 512, 1024, 1452},
+	{224, 640, 1088, 1424},
+}
+
+// ShapeBucketsForGenome deterministically selects one of the shape ladders
+// from the protocol fingerprint. Both endpoints derive it independently;
+// a sender never needs the receiver to know its ladder.
+func ShapeBucketsForGenome(g *genome.ProtocolGenome) []int {
+	if g == nil {
+		return append([]int(nil), DefaultShapeBuckets...)
+	}
+	sum := sha256.Sum256([]byte("chimera-pgc/0/shape-ladder\x00" + g.ProtocolFingerprint))
+	ladder := shapeLadders[int(sum[0])%len(shapeLadders)]
+	return append([]int(nil), ladder...)
+}
 
 // SetShapeBuckets pads encoded frames up to the next rung of buckets.
 // An empty slice disables shaping. Only the send codec is affected.

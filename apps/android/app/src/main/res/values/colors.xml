@@ -1,22 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#2A221C</color>
-    <color name="surface">#382E26</color>
-    <color name="input">#221C18</color>
-    <color name="ink">#F3E6D8</color>
-    <color name="muted">#C4B09A</color>
-    <color name="accent">#D4783A</color>
-    <color name="accent_ink">#2A1A10</color>
-    <color name="ok">#7BC47F</color>
-    <color name="bad">#E05A3C</color>
-    <color name="colorPrimary">#D4783A</color>
+    <!-- DESIGN.md tokens (OKLCH converted to sRGB hex for Android) -->
+    <color name="bg">#160D08</color>
+    <color name="surface">#221812</color>
+    <color name="surface_hi">#2E2118</color>
+    <color name="input">#0E0804</color>
+    <color name="ink">#EFE6DD</color>
+    <color name="muted">#B7A89B</color>
+    <color name="line">#3B3029</color>
+    <color name="line_soft">#2A1F18</color>
+    <color name="accent">#DC7A44</color>
+    <color name="accent_hi">#EE8A50</color>
+    <color name="accent_ink">#1C0D06</color>
+    <color name="ok">#7FC581</color>
+    <color name="ok_ink">#091509</color>
+    <color name="warn">#DBB155</color>
+    <color name="warn_ink">#181003</color>
+    <color name="bad">#EA6A64</color>
+    <color name="bad_ink">#22100F</color>
+
+    <!-- Material theme aliases -->
+    <color name="colorPrimary">#DC7A44</color>
     <color name="colorPrimaryVariant">#B45F28</color>
-    <color name="colorOnPrimary">#2A1A10</color>
-    <color name="colorSecondary">#7BC47F</color>
+    <color name="colorOnPrimary">#1C0D06</color>
+    <color name="colorPrimaryContainer">#2E2118</color>
+    <color name="colorOnPrimaryContainer">#EFE6DD</color>
+    <color name="colorSecondary">#7FC581</color>
     <color name="colorSecondaryVariant">#4E8A55</color>
-    <color name="colorOnSecondary">#142016</color>
-    <color name="colorSurface">#382E26</color>
-    <color name="colorOnSurface">#F3E6D8</color>
-    <color name="colorError">#E05A3C</color>
-    <color name="colorOnError">#F3E6D8</color>
+    <color name="colorOnSecondary">#091509</color>
+    <color name="colorSecondaryContainer">#142016</color>
+    <color name="colorOnSecondaryContainer">#9BDBA0</color>
+    <color name="colorSurface">#221812</color>
+    <color name="colorSurfaceVariant">#2E2118</color>
+    <color name="colorOnSurface">#EFE6DD</color>
+    <color name="colorOnSurfaceVariant">#B7A89B</color>
+    <color name="colorOutline">#3B3029</color>
+    <color name="colorError">#EA6A64</color>
+    <color name="colorOnError">#22100F</color>
+    <color name="colorErrorContainer">#3A1A16</color>
+    <color name="colorOnErrorContainer">#FFC2BC</color>
+    <color name="ic_launcher_background">#160D08</color>
 </resources>

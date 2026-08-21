@@ -30,6 +30,8 @@ apps/windows/
 └── build/
     ├── build.bat                # 生产构建脚本
     ├── dev.bat                  # 开发模式脚本
+    ├── appicon.png              # AI 生成的应用图标源图（Wails 构建时读取）
+    ├── windows/icon.ico         # 16–256px 多尺寸图标，嵌入 exe 与托盘
     └── README.md                # Windows Defender 与代码签名说明
 ```
 
@@ -188,10 +190,13 @@ const defaultServer = await window.go.main.ChimeraApp.SelectServerDefault()
 
 | 方法 | 说明 |
 | --- | --- |
-| `Start(seedHex string, generation uint64, pskHex string, serverAddr string) error` | 校验十六进制、保存 JSON 配置到 exe 旁、启动传输层 |
+| `Start(seedHex string, generation uint64, pskHex string, serverAddr string) error` | 兼容旧前端；沿用已保存的 transport/splitTunnel 配置 |
+| `StartWithTransport(seedHex, generation, pskHex, serverAddr, transport string) error` | 指定 udp/tcp 传输启动 |
+| `StartAdvanced(seedHex, generation, pskHex, serverAddr, transport string, splitTunnel bool) error` | 指定传输 + 是否分流（局域网/私网直连）启动 |
+| `StartWithOptions(..., transport string, splitTunnel bool, portHopCount, portHopSpread int) error` | 完整参数：传输 + 分流 + 端口跳跃 |
 | `Stop() error` | 优雅停止传输层，应用进程保持存活 |
 | `Status() string` | 返回 `disconnected` / `connecting` / `connected` / `error: <detail>` |
-| `Config() (map[string]any, error)` | 返回当前保存的 `seedHex/generation/pskHex/serverAddr` |
+| `Config() (map[string]any, error)` | 返回当前保存的 `seedHex/generation/pskHex/serverAddr/transport/splitTunnel` |
 | `SelectServerDefault() string` | 返回默认服务器地址常量 `127.0.0.1:4789` |
 
 ### 4.4 core_bridge 构建标签

@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -19,9 +20,13 @@ import (
 
 const (
 	handshakeTimeout = 8 * time.Second
-	retransmitBase   = 200 * time.Millisecond
-	maxRetransmit    = 2 * time.Second
-	maxDatagram      = 64 * 1024
+
+	// PortHopHandshakeTimeout bounds a single derived-port probe. Dead
+	// ports fail fast so a hopping client can walk the sequence in seconds.
+	PortHopHandshakeTimeout = 3 * time.Second
+	retransmitBase          = 200 * time.Millisecond
+	maxRetransmit           = 2 * time.Second
+	maxDatagram             = 64 * 1024
 
 	// ControlAssignIP marks a non-IP control payload. IP packets start with
 	// a 0x4 or 0x6 version nibble, so 0x01-0x03 are unambiguous.
@@ -177,6 +182,14 @@ func (t *PacketTunnel) SetShapeBuckets(buckets []int) {
 	}
 }
 
+// SetTxMask installs a send-side traffic mask around the packet socket.
+// Call before packet pumps start (like SetShapeBuckets/SetJitter).
+func (t *PacketTunnel) SetTxMask(mask TxMask) {
+	if mask != nil && t.conn != nil {
+		t.conn = mask(t.conn)
+	}
+}
+
 // SetKeepalive starts the NAT keepalive pump. interval > 0 sets the idle
 // threshold, 0 uses DefaultKeepaliveInterval, negative disables the pump.
 // While traffic flows the pump stays silent; after one interval of silence
@@ -200,17 +213,24 @@ func (t *PacketTunnel) SetKeepalive(interval time.Duration) {
 	t.kaCancel = cancel
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		// 75%..125% of the nominal interval: keepalives do not tick like a
+		// metronome, so idle-flow timing is less useful as a fingerprint.
+		nextDelay := func() time.Duration {
+			return time.Duration(int64(interval) * int64(75+rand.Int64N(51)) / 100)
+		}
+		timer := time.NewTimer(nextDelay())
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				if t.quietFor() < interval {
+					timer.Reset(interval / 4)
 					continue
 				}
 				_ = t.sendControlRaw([]byte{ControlKeepalive})
+				timer.Reset(nextDelay())
 			}
 		}
 	}()
@@ -518,7 +538,17 @@ func ClientHandshake(conn net.PacketConn, peer net.Addr, h *compiler.Handshake) 
 
 // ClientHandshakeWithJitter is ClientHandshake with send-side timing smear.
 func ClientHandshakeWithJitter(conn net.PacketConn, peer net.Addr, h *compiler.Handshake, jitter time.Duration) (*compiler.PacketSession, error) {
-	if _, err := runHandshake(h, conn, peer, true, jitter); err != nil {
+	return ClientHandshakeWithJitterTimeout(conn, peer, h, jitter, handshakeTimeout)
+}
+
+// ClientHandshakeWithJitterTimeout is ClientHandshakeWithJitter with an
+// explicit per-attempt deadline. Port-hopping clients use a shorter timeout
+// on derived ports so the sequence can be walked quickly.
+func ClientHandshakeWithJitterTimeout(conn net.PacketConn, peer net.Addr, h *compiler.Handshake, jitter time.Duration, timeout time.Duration) (*compiler.PacketSession, error) {
+	if timeout <= 0 {
+		timeout = handshakeTimeout
+	}
+	if _, err := runHandshake(h, conn, peer, true, jitter, timeout); err != nil {
 		return nil, err
 	}
 	return h.FinishPacket()
@@ -527,7 +557,7 @@ func ClientHandshakeWithJitter(conn net.PacketConn, peer net.Addr, h *compiler.H
 // ServerHandshake waits for one client and completes the generated datagram
 // handshake. conn must be an already-listening UDP socket.
 func ServerHandshake(conn net.PacketConn, h *compiler.Handshake) (net.Addr, *compiler.PacketSession, error) {
-	peer, err := runHandshake(h, conn, nil, false, 0)
+	peer, err := runHandshake(h, conn, nil, false, 0, handshakeTimeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -547,7 +577,7 @@ func ServerHandshake(conn net.PacketConn, h *compiler.Handshake) (net.Addr, *com
 //   - while waiting, retransmit the last sent frame with exponential backoff;
 //   - a client whose first step is a receive sends an authenticated knock so
 //     server-first handshake patterns have a peer address to answer.
-func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isClient bool, jitter time.Duration) (net.Addr, error) {
+func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isClient bool, jitter time.Duration, timeout time.Duration) (net.Addr, error) {
 	var last []byte
 	sentOnce := false
 
@@ -562,7 +592,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 				// Server-first: wait for an authenticated knock. Random
 				// probes (Alice, IMC 2020) must not elicit the real first
 				// frame — that was a confirmation oracle.
-				addr, err := waitAuthenticatedKnock(conn, h, handshakeTimeout)
+				addr, err := waitAuthenticatedKnock(conn, h, timeout)
 				if err != nil {
 					return nil, err
 				}
@@ -596,7 +626,7 @@ func runHandshake(h *compiler.Handshake, conn net.PacketConn, peer net.Addr, isC
 		}
 
 		wait := retransmitBase
-		deadline := time.Now().Add(handshakeTimeout)
+		deadline := time.Now().Add(timeout)
 		received := false
 		for !h.Done() && time.Now().Before(deadline) {
 			if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {

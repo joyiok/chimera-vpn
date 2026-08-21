@@ -4,7 +4,10 @@ go 1.25.0
 
 require golang.org/x/sys v0.47.0
 
-require golang.org/x/crypto v0.55.0
+require (
+	github.com/gorilla/websocket v1.5.3
+	golang.org/x/crypto v0.55.0
+)
 
 require (
 	golang.org/x/mobile v0.0.0-20260816165457-f98cc9b3c733 // indirect

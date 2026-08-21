@@ -11,6 +11,11 @@ import (
 // Windows GUI file) plus optional Linux TUN fields.
 type clientConfig struct {
 	ServerAddr       string `json:"serverAddr"`
+	Transport        string `json:"transport"`
+	PortHopCount     int    `json:"portHopCount"`
+	PortHopSpread    int    `json:"portHopSpread"`
+	TLSCAFile        string `json:"tlsCAFile"`
+	TLSInsecure      bool   `json:"tlsInsecureSkipVerify"`
 	SeedHex          string `json:"seedHex"`
 	Generation       uint64 `json:"generation"`
 	PSKHex           string `json:"pskHex"`

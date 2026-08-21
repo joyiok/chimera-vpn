@@ -126,9 +126,36 @@ JSON 规格示例由 `cmd/gencompiler -json` 导出；`ProtocolFingerprint` 是�
 - 服务端 generation 窗口：并行编译 `generation … generation+window`（默认 window=2）。
   client-first 首包对窗口内每一代做封面剥离 + RecvStep，命中即绑定该代；server-first 的
   knock 仍只绑定基代（knock 无法携带代号）。客户端 `GenerationWindow` 在超时后探测 gen+1…。
-- 尚未实现：端口跳跃、车道 B/C。重放账本默认可落盘；文件损坏或权限失败时退回内存表。
+- 尚未实现：车道 B/C。重放账本默认可落盘；文件损坏或权限失败时退回内存表。
 
-## 7. 密码学边界
+## 7. 传输封装（UDP / TCP）
+
+默认 `udp`：线上字节直接作为 UDP datagram 发送，保留所有包长整形与时序抖动。
+
+`tcp`：同样的线上字节前加 **2 字节大端长度帧**（最大 65535），在可靠字节流上按帧切分。
+`websocket`：与 tcp 完全相同的帧格式，承载在 WebSocket 二进制消息上。升级路径由
+seed+generation 派生（`/` + 16 hex），其余 HTTP 路径返回普通 404 页面，扫描器无法
+从路径区分该监听器与普通 Web 服务。
+`wss`：websocket + 标准 TLS（最低 TLS 1.2）。服务端需要 `tls_cert_file/tls_key_file`；
+客户端默认使用系统根证书校验，`tlsCAFile` 可附加私有 CA，开发调试才有
+`tlsInsecureSkipVerify`。
+TCP 监听器对未通过认证的首帧执行可配置探测防御：`close`（立即关闭）、
+`silent`（默认，静默保持至超时）、`tls`（首帧像 TLS ClientHello 时回标准 fatal alert，否则静默）。
+超时与并发上限分别为 `stream_decoy_timeout_sec` / `stream_decoy_max_pending`。
+
+已认证会话还可启用发送侧噪声掩码：每 `decoy_every` 次真实写入后附带一个
+密码学随机载荷的假帧（每秒上限 `decoy_max_per_sec`）。假帧长度取自该协议物种的
+整形阶梯，接收方 AEAD 校验失败后静默丢弃，因此两端无需同步任何额外状态。
+
+端口跳跃：`port_hop_count` > 1 时，服务端在 base 端口和由 HMAC(seed, generation)
+派生的若干端口上同时监听；客户端按同一序列依次探测，每个派生端口握手超时缩短到
+3s。首个可达端口成为会话端点，UDP 与 TCP 使用同一套派生规则。
+握手、AEAD、nonce、ACK/SKIP、keepalive 全部复用同一套编译器，不改协议基因组；
+服务器对每个 TCP 连接运行独立的流式握手，generation 窗口行为与 UDP 相同。
+适合 UDP 被 QoS/限速/丢包严重的网络。socket 层同时会调大收发缓冲并把 ToS/DSCP 归零，
+避免被运营商分类为语音/视频流量。
+
+## 8. 密码学边界
 
 - AES-GCM（Go 标准库）与 ChaCha20-Poly1305（`golang.org/x/crypto`）均已接入；
   基因组默认只在 AES 三档中抽签，ChaCha 通过 `cipher` 配置显式强制。

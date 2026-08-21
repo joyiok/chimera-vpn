@@ -104,6 +104,13 @@ type ServerTunnel struct {
 	generation uint64
 }
 
+// SetTxMask installs a send-side mask before the session is published.
+func (t *ServerTunnel) SetTxMask(mask TxMask) {
+	if mask != nil && t.conn != nil {
+		t.conn = mask(t.conn)
+	}
+}
+
 func (t *ServerTunnel) SendPacket(packet []byte) error {
 	select {
 	case <-t.closed:
@@ -357,6 +364,7 @@ type ServerMux struct {
 	maxSessions  int
 	decoy        *compiler.CompiledProtocol
 	shapeBuckets []int
+	txMask       TxMask
 	jitterMax    time.Duration
 	cps          []*compiler.CompiledProtocol
 	replays      *replayCache
@@ -446,6 +454,13 @@ func (m *ServerMux) WithDecoy(cp *compiler.CompiledProtocol) *ServerMux {
 // rung. Empty disables shaping (the default until the caller opts in).
 func (m *ServerMux) WithShapeBuckets(buckets []int) *ServerMux {
 	m.shapeBuckets = append([]int(nil), buckets...)
+	return m
+}
+
+// WithTxMask installs a send-side noise mask on every session that this
+// mux accepts. The mask wraps each ServerTunnel's shared socket writer.
+func (m *ServerMux) WithTxMask(mask TxMask) *ServerMux {
+	m.txMask = mask
 	return m
 }
 
@@ -891,6 +906,9 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 	}
 	if len(m.shapeBuckets) > 0 {
 		tun.sess.SetShapeBuckets(m.shapeBuckets)
+	}
+	if m.txMask != nil {
+		tun.SetTxMask(m.txMask)
 	}
 	tun.lastActive.Store(time.Now().UnixNano())
 	tun.onClose = func() {

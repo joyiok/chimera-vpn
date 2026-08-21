@@ -1,30 +1,50 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Chimera</string>
+    <string name="tagline">夜间操作台 · 关屏不断连</string>
     <string name="invite_hint">邀请链接</string>
-    <string name="invite_placeholder">chimera://v1/…</string>
+    <string name="invite_placeholder">chimera://v1/… 或 client.json</string>
     <string name="import_invite">导入</string>
     <string name="copy_invite">复制邀请</string>
     <string name="invite_help">粘贴或点开链接即可，不必手填密钥。链接就是密码。</string>
     <string name="advanced">手动填写</string>
+    <string name="advanced_open">▾ 手动填写</string>
+    <string name="advanced_closed">▸ 手动填写</string>
     <string name="server_hint">服务器</string>
+    <string name="server_name_hint">名称（可选）</string>
     <string name="seed_hint">Seed（十六进制）</string>
     <string name="generation_hint">Generation</string>
     <string name="psk_hint">PSK（十六进制）</string>
     <string name="tun_ip_hint">本机 TUN 地址</string>
+    <string name="transport_hint">传输（udp / tcp / websocket / wss）</string>
+    <string name="port_hop_count_hint">端口跳跃数（1 = 关闭）</string>
+    <string name="port_hop_spread_hint">跳跃偏移范围（0 = 默认 2048）</string>
+    <string name="split_tunnel_label">分流：局域网 / 私网直连</string>
+    <string name="split_tunnel_desc">开启后只有公网流量走 VPN，家庭网络、打印机等直连</string>
     <string name="connect">连接</string>
     <string name="disconnect">断开</string>
+    <string name="retry">重试</string>
+    <string name="connecting">连接中…</string>
     <string name="status_idle">未连接</string>
     <string name="status_connecting">正在连接…</string>
     <string name="status_connected">已连接</string>
     <string name="status_disconnected">已断开</string>
+    <string name="traffic_label">流量</string>
+    <string name="traffic_up">上行</string>
+    <string name="traffic_down">下行</string>
+    <string name="traffic_rate">%1$s/s</string>
     <string name="log_label">日志</string>
     <string name="log_empty">暂无日志</string>
+    <string name="clear_logs">清空</string>
     <string name="reconnect">重连</string>
     <string name="notification_running">VPN 正在运行</string>
     <string name="traffic_idle">↑ 0 B    ↓ 0 B</string>
     <string name="nodes_label">入口</string>
+    <string name="nodes_help">只记 host:port。协议密钥跟邀请走。</string>
+    <string name="nodes_empty">还没有保存的入口。连上一次，或点「保存入口」。</string>
     <string name="save_node">保存入口</string>
+    <string name="delete_node">删除</string>
+    <string name="footer_note">配置仅保存在本机。密钥不会写入日志或回传。</string>
     <string name="tile_label">Chimera</string>
     <string name="toast_fill_all">请填写服务器、Seed、Generation、PSK</string>
     <string name="toast_generation_invalid">Generation 必须是整数</string>
@@ -33,4 +53,6 @@
     <string name="toast_invite_bad">邀请链接无效</string>
     <string name="toast_copied">邀请链接已复制，不要发到公开群</string>
     <string name="toast_copy_need_fields">先导入或填好配置再复制</string>
+    <string name="toast_server_empty">先填写服务器地址再保存入口</string>
+    <string name="toast_hex_invalid">Seed 和 PSK 都必须是 64 位十六进制</string>
 </resources>

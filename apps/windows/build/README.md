@@ -39,5 +39,6 @@ GitHub Actions（`.github/workflows/ci.yml` job `windows-wails`）在 `windows-l
    Start 会返回 `transport not compiled`。生产版本请务必使用
    `build.bat with_transport` 并在已合并 `chimera/core` 的代码库上构建。
 5. **版本信息与图标**：正式发布建议在 `wails.json` 中补充 `info` 段，
-   并通过 Wails 的图标/资源能力嵌入版本号和图标，避免可执行文件缺少
-   公司名称、版本等元数据。
+   避免可执行文件缺少公司名称、版本等元数据。应用图标已提供：
+   `build/appicon.png`（AI 生成品牌图标源图）与 `build/windows/icon.ico`（16–256px
+   多尺寸），`wails build` 会自动嵌入 exe 与托盘图标。

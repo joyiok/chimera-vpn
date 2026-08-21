@@ -72,8 +72,8 @@ func main() {
 		if len(fp) > 16 {
 			fp = fp[:16]
 		}
-		fmt.Printf("config ok listen=%s generation=%d window=%d jitter=%s sessions=%d genome=%s cover_len=%d replay=%s\n",
-			coreCfg.ServerAddr, coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax, coreCfg.MaxSessions,
+		fmt.Printf("config ok listen=%s transport=%s generation=%d window=%d jitter=%s sessions=%d genome=%s cover_len=%d replay=%s\n",
+			coreCfg.ServerAddr, coreCfg.Transport, coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax, coreCfg.MaxSessions,
 			fp, compiler.CoverLen(g), coreCfg.ReplayPath)
 		return
 	}
@@ -102,8 +102,8 @@ func run(ctx context.Context, coreCfg core.Config, tc tunConfig, noTun bool) err
 	if err := srv.Start(); err != nil {
 		return err
 	}
-	log.Printf("accepting clients on udp/%s bound=%s fingerprint=%s generation=%d window=%d jitter=%s",
-		coreCfg.ServerAddr, srv.LocalAddr(), fingerprint(coreCfg), coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax)
+	log.Printf("accepting clients on %s/%s bound=%s fingerprint=%s generation=%d window=%d jitter=%s",
+		coreCfg.Transport, coreCfg.ServerAddr, srv.LocalAddr(), fingerprint(coreCfg), coreCfg.Generation, coreCfg.GenerationWindow, coreCfg.JitterMax)
 
 	if noTun {
 		return runUserspace(ctx, srv)

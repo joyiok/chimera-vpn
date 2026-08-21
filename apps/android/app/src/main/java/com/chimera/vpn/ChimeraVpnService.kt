@@ -78,6 +78,16 @@ class ChimeraVpnService : VpnService() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (config.transport != "udp" && config.transport != "tcp" && config.transport != "websocket" && config.transport != "wss") {
+            postStatus("传输参数无效：${config.transport}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (config.portHopCount !in 1..16) {
+            postStatus("端口跳跃数无效：${config.portHopCount}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         postStatus(getString(R.string.status_connecting))
         lastConfig = config
@@ -162,16 +172,11 @@ class ChimeraVpnService : VpnService() {
 
     private suspend fun startVpn(config: VpnConfig) {
         try {
-            postLog("正在建立 VPN 隧道：${config.serverAddr}")
+            postLog("正在建立 VPN 隧道：${config.serverAddr} transport=${config.transport} split=${config.splitTunnel}")
 
             // 先完成 CHIMERA 握手，再从服务器获取自动分配的 TUN 地址；
             // 服务端未开启地址分配时，回退到界面填写的地址。
-            val handle = GoBind.start(
-                seedHex = config.seedHex,
-                generation = config.generation,
-                pskHex = config.pskHex,
-                serverAddr = config.serverAddr
-            )
+            val handle = startGo(config)
             if (!protectUdpSocket(handle)) {
                 runCatching { GoBind.stop(handle) }
                 throw IllegalStateException("VpnService.protect 失败，UDP 套接字无法绕过 TUN")
@@ -180,7 +185,7 @@ class ChimeraVpnService : VpnService() {
             val assigned = runCatching { GoBind.assignedIP(handle) }.getOrNull()
             val tunAddrAssigned = assigned ?: config.tunIp
 
-            val pfd = establishTun(tunAddrAssigned)
+            val pfd = establishTun(tunAddrAssigned, config.splitTunnel)
             attachTun(pfd)
             vpnInterface = pfd
             tunAddr = tunAddrAssigned
@@ -204,24 +209,79 @@ class ChimeraVpnService : VpnService() {
         }
     }
 
-    private fun establishTun(address: String): ParcelFileDescriptor {
+    private fun startGo(config: VpnConfig): Long {
+        if (config.portHopCount > 1) {
+            return GoBind.startTransportWithHop(
+                seedHex = config.seedHex,
+                generation = config.generation,
+                pskHex = config.pskHex,
+                serverAddr = config.serverAddr,
+                transport = config.transport,
+                hopCount = config.portHopCount,
+                hopSpread = config.portHopSpread
+            )
+        }
+        return if (config.transport == "tcp") {
+            GoBind.startTransport(
+                seedHex = config.seedHex,
+                generation = config.generation,
+                pskHex = config.pskHex,
+                serverAddr = config.serverAddr,
+                transport = "tcp"
+            )
+        } else {
+            GoBind.start(
+                seedHex = config.seedHex,
+                generation = config.generation,
+                pskHex = config.pskHex,
+                serverAddr = config.serverAddr
+            )
+        }
+    }
+
+    private fun establishTun(address: String, splitTunnel: Boolean): ParcelFileDescriptor {
         val builder = Builder()
             .setSession(getString(R.string.app_name))
             .setMtu(1400)
             .addAddress(address, 24)
-            .addRoute("0.0.0.0", 0)
             .addDnsServer("1.1.1.1")
             .addDnsServer("8.8.8.8")
+
+        if (splitTunnel) {
+            // 分流：仅把公网 IPv4 送进 VPN，私网/环回/链路本地/组播直连。
+            // 路由表在 res/values/split_routes.xml，与 Windows 的绕过列表一致。
+            val routes = resources.getStringArray(R.array.split_tunnel_ipv4_routes)
+            var added = 0
+            for (route in routes) {
+                runCatching { builder.addRoute(route, 0) }
+                    .onSuccess { added++ }
+                    .onFailure { postLog("分流路由 ${route} 被系统拒绝：${it.message}") }
+            }
+            if (added == 0) {
+                // 极端兜底：系统不接受白名单路由时退回全局，避免断网。
+                builder.addRoute("0.0.0.0", 0)
+                postLog("分流路由全部被拒绝，已退回全局模式")
+            } else {
+                postLog("分流模式已安装 ${added} 条公网路由，局域网/私网直连")
+            }
+        } else {
+            builder.addRoute("0.0.0.0", 0)
+            postLog("全局模式：IPv4 全部走 VPN")
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
         try {
             builder.addAddress("fd99::2", 64)
-            builder.addRoute("::", 0)
+            if (splitTunnel) {
+                builder.addRoute("2000::", 3) // 仅全球单播 IPv6 走 VPN
+            } else {
+                builder.addRoute("::", 0)
+            }
             builder.addDnsServer("2606:4700:4700::1111")
         } catch (e: Exception) {
-            postLog("IPv6 默认路由未安装：${e.message}")
+            postLog("IPv6 路由未安装：${e.message}")
         }
         try {
             builder.addDisallowedApplication(packageName)
@@ -353,12 +413,7 @@ class ChimeraVpnService : VpnService() {
         try {
             postLog("正在重连：$reason")
             postStatus("重连中…")
-            val newHandle = GoBind.start(
-                seedHex = config.seedHex,
-                generation = config.generation,
-                pskHex = config.pskHex,
-                serverAddr = config.serverAddr
-            )
+            val newHandle = startGo(config)
             if (!protectUdpSocket(newHandle)) {
                 runCatching { GoBind.stop(newHandle) }
                 throw IllegalStateException("重连 protect 失败")
@@ -366,7 +421,7 @@ class ChimeraVpnService : VpnService() {
             val assigned = runCatching { GoBind.assignedIP(newHandle) }.getOrNull()
             val newAddr = assigned ?: config.tunIp
             if (newAddr != tunAddr) {
-                val newPfd = establishTun(newAddr)
+                val newPfd = establishTun(newAddr, config.splitTunnel)
                 val oldPfd = vpnInterface
                 attachTun(newPfd)
                 vpnInterface = newPfd
@@ -404,15 +459,25 @@ class ChimeraVpnService : VpnService() {
         runCatching { vpnInterface?.close() }
         vpnInterface = null
 
-        if (vpnHandle >= 0L) {
-            runCatching { GoBind.stop(vpnHandle) }
-                .onFailure { postLog("Go 核心停止失败：${it.message}") }
-            vpnHandle = -1L
-        }
-
         if (isRunning) {
             isRunning = false
             postStatus(getString(R.string.status_disconnected))
+        } else {
+            val current = status.value
+            if (current.contains("连接中") || current.contains("重连中")) {
+                postStatus(getString(R.string.status_disconnected))
+            }
+        }
+
+        if (vpnHandle >= 0L) {
+            val handle = vpnHandle
+            vpnHandle = -1L
+            // 不阻塞主线程：Go 侧 Close 正常很快；若旧 AAR/内核卡住，
+            // UI 状态也已经先切换到“已断开”。
+            Thread {
+                runCatching { GoBind.stop(handle) }
+                    .onFailure { postLog("Go 核心停止失败：${it.message}") }
+            }.start()
         }
     }
 
@@ -431,7 +496,7 @@ class ChimeraVpnService : VpnService() {
             postLog("protect($fd) 失败")
             return false
         }
-        postLog("已 protect UDP fd=$fd，隧道套接字绕过 TUN")
+        postLog("已 protect transport fd=$fd，隧道套接字绕过 TUN")
         return true
     }
 
@@ -452,7 +517,11 @@ class ChimeraVpnService : VpnService() {
             seedHex = intent.getStringExtra(EXTRA_SEED).orEmpty(),
             generation = intent.getLongExtra(EXTRA_GENERATION, 0L),
             pskHex = intent.getStringExtra(EXTRA_PSK).orEmpty(),
-            tunIp = tunIp.ifBlank { "10.99.0.2" }
+            tunIp = tunIp.ifBlank { "10.99.0.2" },
+            transport = intent.getStringExtra(EXTRA_TRANSPORT).orEmpty().ifBlank { "udp" },
+            splitTunnel = intent.getBooleanExtra(EXTRA_SPLIT_TUNNEL, true),
+            portHopCount = intent.getIntExtra(EXTRA_PORT_HOP_COUNT, 1),
+            portHopSpread = intent.getIntExtra(EXTRA_PORT_HOP_SPREAD, 0)
         )
     }
 
@@ -461,7 +530,11 @@ class ChimeraVpnService : VpnService() {
         val seedHex: String,
         val generation: Long,
         val pskHex: String,
-        val tunIp: String = "10.99.0.2"
+        val tunIp: String = "10.99.0.2",
+        val transport: String = "udp",
+        val splitTunnel: Boolean = true,
+        val portHopCount: Int = 1,
+        val portHopSpread: Int = 0
     )
 
     companion object {
@@ -478,6 +551,10 @@ class ChimeraVpnService : VpnService() {
         private const val EXTRA_GENERATION = "extra_generation"
         private const val EXTRA_PSK = "extra_psk"
         private const val EXTRA_TUN_IP = "extra_tun_ip"
+        private const val EXTRA_TRANSPORT = "extra_transport"
+        private const val EXTRA_SPLIT_TUNNEL = "extra_split_tunnel"
+        private const val EXTRA_PORT_HOP_COUNT = "extra_port_hop_count"
+        private const val EXTRA_PORT_HOP_SPREAD = "extra_port_hop_spread"
         const val ACTION_DISCONNECT = "com.chimera.vpn.action.DISCONNECT"
         const val ACTION_RECONNECT = "com.chimera.vpn.action.RECONNECT"
 
@@ -506,12 +583,22 @@ class ChimeraVpnService : VpnService() {
                 putExtra(EXTRA_GENERATION, config.generation)
                 putExtra(EXTRA_PSK, config.pskHex)
                 putExtra(EXTRA_TUN_IP, config.tunIp)
+                putExtra(EXTRA_TRANSPORT, config.transport)
+                putExtra(EXTRA_SPLIT_TUNNEL, config.splitTunnel)
+                putExtra(EXTRA_PORT_HOP_COUNT, config.portHopCount)
+                putExtra(EXTRA_PORT_HOP_SPREAD, config.portHopSpread)
             }
             context.startForegroundService(intent)
         }
 
+        /** 确定性停止：服务在跑时用 ACTION_DISCONNECT 显式触发 stopVpn+stopSelf。 */
         fun stop(context: Context) {
-            context.stopService(Intent(context, ChimeraVpnService::class.java))
+            val intent = Intent(context, ChimeraVpnService::class.java).setAction(ACTION_DISCONNECT)
+            if (isRunning) {
+                runCatching { context.startService(intent) }
+                    .onSuccess { return }
+            }
+            context.stopService(intent)
         }
 
         fun postStatus(value: String) {

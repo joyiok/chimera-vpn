@@ -1,5 +1,9 @@
 import './style.css'
 
+const SPARK_ACCENT = '#DC7A44'
+const SPARK_OK = '#7FC581'
+const SPARK_GRID = 'rgba(183, 168, 155, 0.16)'
+
 function looksLikeApp(obj) {
   return !!obj && typeof obj.Start === 'function' && typeof obj.Status === 'function'
 }
@@ -50,19 +54,25 @@ async function waitForAPI(timeoutMs = 5000) {
 const $ = (id) => document.getElementById(id)
 const els = {
   statusBadge: $('statusBadge'),
+  statusText: $('statusText'),
   serverAddr: $('serverAddr'),
   serverName: $('serverName'),
   seedHex: $('seedHex'),
   generation: $('generation'),
   pskHex: $('pskHex'),
+  transportInput: $('transportInput'),
+  splitTunnel: $('splitTunnel'),
+  portHopCount: $('portHopCount'),
+  portHopSpread: $('portHopSpread'),
   connectBtn: $('connectBtn'),
-  disconnectBtn: $('disconnectBtn'),
+  connectLabel: $('connectLabel'),
   saveServerBtn: $('saveServerBtn'),
   trayBtn: $('trayBtn'),
   inviteInput: $('inviteInput'),
   importBtn: $('importBtn'),
   copyInviteBtn: $('copyInviteBtn'),
   logs: $('logs'),
+  clearLogsBtn: $('clearLogsBtn'),
   serverList: $('serverList'),
   txTotal: $('txTotal'),
   rxTotal: $('rxTotal'),
@@ -82,15 +92,19 @@ const samples = []
 let lastSent = 0
 let lastRecv = 0
 let lastTs = 0
+let busy = false
+let currentStatus = 'disconnected'
 
-function log(message, level = 'info') {
-  const line = document.createElement('div')
-  line.className = `log ${level}`
-  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  line.textContent = `[${time}] ${message}`
-  els.logs.appendChild(line)
-  while (els.logs.children.length > 200) els.logs.firstChild.remove()
-  els.logs.scrollTop = els.logs.scrollHeight
+function svgIcon(name) {
+  return `<svg class="ico" aria-hidden="true"><use href="#i-${name}"></use></svg>`
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 function formatBytes(n) {
@@ -101,31 +115,66 @@ function formatBytes(n) {
   return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-function updateBadge(status, detail = '') {
-  const normalized = status === 'error' ? 'error' : status
+function log(message, level = 'info') {
+  const line = document.createElement('div')
+  line.className = `log ${level}`
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  line.textContent = `[${time}] ${message}`
+  const nearBottom = els.logs.scrollHeight - els.logs.scrollTop - els.logs.clientHeight < 36
+  els.logs.appendChild(line)
+  while (els.logs.children.length > 200) els.logs.firstChild.remove()
+  if (nearBottom) els.logs.scrollTop = els.logs.scrollHeight
+}
+
+function clearLogs() {
+  els.logs.innerHTML = ''
+  log('日志已清空。', 'muted')
+}
+
+function renderStatus(status, detail = '') {
+  const normalized = ['disconnected', 'connecting', 'connected', 'error'].includes(status)
+    ? status
+    : 'error'
+  currentStatus = status.trim() || 'disconnected'
+
   els.statusBadge.className = `badge ${normalized}`
-  els.statusBadge.textContent = detail
-    ? `${STATUS_TEXT[normalized] ?? normalized}：${detail}`
-    : (STATUS_TEXT[normalized] ?? normalized)
+  const detailText = detail ? `：${detail}` : ''
+  els.statusBadge.title = `${STATUS_TEXT[normalized] ?? normalized}${detailText}`
+  els.statusText.textContent = (STATUS_TEXT[normalized] ?? normalized) + detailText
+
+  els.connectBtn.dataset.state = normalized
+  els.connectLabel.textContent =
+    normalized === 'connected'
+      ? '断开'
+      : normalized === 'connecting'
+        ? '连接中…'
+        : normalized === 'error'
+          ? '重试'
+          : '连接'
+  els.connectBtn.disabled = busy || normalized === 'connecting'
+}
+
+function setBusy(value) {
+  busy = value
+  els.connectBtn.classList.toggle('is-busy', value)
+  els.connectBtn.disabled = value || currentStatus === 'connecting'
 }
 
 async function refreshStatus() {
   const api = getAPI()
-  if (!api) return
+  if (!api) return 'disconnected'
   try {
     const raw = await api.Status()
-    const [status, ...rest] = raw.split(':')
-    const detail = rest.join(':').trim()
-    updateBadge(status.trim(), detail)
-    return status.trim()
+    const text = String(raw ?? '')
+    const idx = text.indexOf(':')
+    const status = (idx >= 0 ? text.slice(0, idx) : text).trim()
+    const detail = (idx >= 0 ? text.slice(idx + 1) : '').trim()
+    renderStatus(status, detail)
+    return status || 'disconnected'
   } catch (e) {
-    updateBadge('error', String(e))
+    renderStatus('error', String(e))
     return 'error'
   }
-}
-
-function setBusy(busy) {
-  els.connectBtn.disabled = busy
 }
 
 function drawSpark() {
@@ -133,28 +182,46 @@ function drawSpark() {
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   const dpr = window.devicePixelRatio || 1
-  const w = canvas.clientWidth
-  const h = canvas.clientHeight
-  canvas.width = Math.max(1, Math.floor(w * dpr))
-  canvas.height = Math.max(1, Math.floor(h * dpr))
+  const w = Math.max(1, canvas.clientWidth || canvas.parentElement.clientWidth)
+  const h = Math.max(1, canvas.clientHeight || 58)
+  canvas.width = Math.floor(w * dpr)
+  canvas.height = Math.floor(h * dpr)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
-  ctx.strokeStyle = '#30363d'
+
+  ctx.strokeStyle = SPARK_GRID
+  ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(0, h - 0.5)
   ctx.lineTo(w, h - 0.5)
   ctx.stroke()
+
   if (samples.length < 2) return
+
   const max = Math.max(1, ...samples)
-  ctx.strokeStyle = '#388bfd'
-  ctx.lineWidth = 1.5
+  const points = samples.map((v, i) => ({
+    x: (i / (samples.length - 1)) * w,
+    y: h - (v / max) * (h - 8) - 4,
+  }))
+  const color = currentStatus === 'connected' ? SPARK_OK : SPARK_ACCENT
+
+  const fill = ctx.createLinearGradient(0, 0, 0, h)
+  fill.addColorStop(0, `${color}3D`)
+  fill.addColorStop(1, `${color}00`)
   ctx.beginPath()
-  samples.forEach((v, i) => {
-    const x = (i / (samples.length - 1)) * w
-    const y = h - (v / max) * (h - 6) - 3
-    if (i === 0) ctx.moveTo(x, y)
-    else ctx.lineTo(x, y)
-  })
+  ctx.moveTo(points[0].x, h)
+  points.forEach((p) => ctx.lineTo(p.x, p.y))
+  ctx.lineTo(points[points.length - 1].x, h)
+  ctx.closePath()
+  ctx.fillStyle = fill
+  ctx.fill()
+
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1.6
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)))
   ctx.stroke()
 }
 
@@ -184,49 +251,68 @@ async function refreshTraffic() {
     if (samples.length > 60) samples.shift()
     drawSpark()
   } catch {
-    // stub build has Traffic but zeros
+    // stub build has Traffic but zeros; network status keeps its own polling.
   }
 }
 
 function renderServers(list) {
   const items = Array.isArray(list) ? list : []
   if (!items.length) {
-    els.serverList.innerHTML = '<div class="muted">还没有保存的入口。连上一次，或点「保存入口」。</div>'
+    els.serverList.innerHTML =
+      '<div class="empty">还没有保存的入口。连上一次，或点「保存入口」。</div>'
     return
   }
+  const current = els.serverAddr.value.trim().toLowerCase()
   els.serverList.innerHTML = ''
   for (const s of items) {
+    const addr = String(s.addr || s.Addr || '').trim()
+    const name = String(s.name || s.Name || '').trim() || addr
+    if (!addr) continue
+
     const row = document.createElement('div')
     row.className = 'server-row'
+    if (current && addr.toLowerCase() === current) row.classList.add('is-active')
+
     const pick = document.createElement('button')
     pick.type = 'button'
     pick.className = 'pick'
-    pick.innerHTML = `<strong>${escapeHtml(s.name || s.Name || s.addr)}</strong><span class="addr">${escapeHtml(s.addr || s.Addr)}</span>`
+    pick.title = `使用入口 ${addr}`
+    pick.innerHTML = `
+      <span class="server-meta">
+        ${svgIcon('server')}
+        <span class="server-copy">
+          <span class="name">${escapeHtml(name)}</span>
+          <span class="addr">${escapeHtml(addr)}</span>
+        </span>
+      </span>`
     pick.addEventListener('click', () => {
-      els.serverAddr.value = s.addr || s.Addr || ''
-      els.serverName.value = s.name || s.Name || ''
-      log(`已选用入口 ${els.serverAddr.value}`)
+      els.serverAddr.value = addr
+      els.serverName.value = name
+      renderServers(items)
+      log(`已选用入口 ${addr}`)
     })
+
     const del = document.createElement('button')
     del.type = 'button'
-    del.className = 'ghost'
-    del.textContent = '删除'
+    del.className = 'delete'
+    del.title = `删除入口 ${addr}`
+    del.setAttribute('aria-label', del.title)
+    del.innerHTML = svgIcon('trash')
     del.addEventListener('click', async () => {
       const api = getAPI()
       if (!api) return
-      await api.ForgetServer(s.addr || s.Addr)
+      try {
+        await api.ForgetServer(addr)
+        log(`已删除入口 ${addr}`)
+      } catch (e) {
+        log(`删除入口失败：${e}`, 'error')
+      }
       await refreshServers()
     })
+
     row.append(pick, del)
     els.serverList.append(row)
   }
-}
-
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
 }
 
 async function refreshServers() {
@@ -235,8 +321,21 @@ async function refreshServers() {
   try {
     renderServers(await api.Servers())
   } catch (e) {
-    log(`读取节点失败：${e}`, 'error')
+    log(`读取入口失败：${e}`, 'error')
   }
+}
+
+function validateForm() {
+  const serverAddr = els.serverAddr.value.trim()
+  const seedHex = els.seedHex.value.trim()
+  const pskHex = els.pskHex.value.trim()
+  const generation = Number.parseInt(els.generation.value || '0', 10)
+
+  if (!serverAddr) return '请填写服务器地址。'
+  if (!/^[0-9a-fA-F]{64}$/.test(seedHex)) return 'Seed 必须是 64 位十六进制。'
+  if (!Number.isInteger(generation) || generation < 0) return 'Generation 必须是非负整数。'
+  if (!/^[0-9a-fA-F]{64}$/.test(pskHex)) return 'PSK 必须是 64 位十六进制。'
+  return null
 }
 
 async function connect() {
@@ -246,37 +345,58 @@ async function connect() {
     return
   }
 
+  const invalid = validateForm()
+  if (invalid) {
+    log(invalid, 'warn')
+    return
+  }
+
   const serverAddr = els.serverAddr.value.trim()
   const seedHex = els.seedHex.value.trim()
   const pskHex = els.pskHex.value.trim()
   const generation = Number.parseInt(els.generation.value || '0', 10)
-
-  if (!serverAddr || !seedHex || !pskHex) {
-    log('请完整填写服务器地址、Seed 和 PSK。', 'warn')
+  const name = els.serverName.value.trim()
+  const transport = els.transportInput.value.trim().toLowerCase() || 'udp'
+  const splitTunnel = els.splitTunnel.checked
+  const hopCount = Number.parseInt(els.portHopCount.value || '1', 10)
+  const hopSpread = Number.parseInt(els.portHopSpread.value || '0', 10)
+  if (!Number.isInteger(hopCount) || hopCount < 1 || hopCount > 16) {
+    log('端口跳跃数必须在 1-16 之间。', 'warn')
     return
   }
-  if (!Number.isInteger(generation) || generation < 0) {
-    log('Generation 必须是非负整数。', 'warn')
+  const hopSpreadFinal = hopCount > 1 && hopSpread <= 0 ? 2048 : hopSpread
+
+  if (transport !== 'udp' && transport !== 'tcp' && transport !== 'websocket' && transport !== 'wss') {
+    log('传输只能是 udp 或 tcp。', 'warn')
     return
   }
 
   setBusy(true)
-  log(`正在连接：server=${serverAddr} generation=${generation}`)
+  renderStatus('connecting')
+  log(`正在连接 server=${serverAddr} generation=${generation} transport=${transport} split=${splitTunnel} hop=${hopCount}/${hopSpreadFinal}`)
   try {
-    await api.Start(seedHex, generation, pskHex, serverAddr)
-    const name = els.serverName.value.trim()
+    if (typeof api.StartWithOptions === 'function') {
+      await api.StartWithOptions(seedHex, generation, pskHex, serverAddr, transport, splitTunnel, hopCount, hopSpreadFinal)
+    } else if (typeof api.StartAdvanced === 'function') {
+      await api.StartAdvanced(seedHex, generation, pskHex, serverAddr, transport, splitTunnel)
+    } else if (typeof api.StartWithTransport === 'function') {
+      await api.StartWithTransport(seedHex, generation, pskHex, serverAddr, transport)
+    } else {
+      await api.Start(seedHex, generation, pskHex, serverAddr)
+    }
     if (name) await api.RememberServer(name, serverAddr)
-    log('Start 调用成功。')
+    log('连接成功。', 'ok')
     lastSent = 0
     lastRecv = 0
     lastTs = 0
     samples.length = 0
     await refreshServers()
   } catch (e) {
-    log(`Start 调用失败：${e}`, 'error')
+    log(`连接失败：${e}`, 'error')
   } finally {
     setBusy(false)
     await refreshStatus()
+    await refreshTraffic()
   }
 }
 
@@ -287,13 +407,23 @@ async function disconnect() {
   log('正在断开连接…')
   try {
     await api.Stop()
-    log('Stop 调用成功。')
+    log('已断开。', 'ok')
   } catch (e) {
-    log(`Stop 调用失败：${e}`, 'error')
+    log(`断开失败：${e}`, 'error')
   } finally {
     setBusy(false)
     await refreshStatus()
   }
+}
+
+function toggleSecret(btn) {
+  const input = document.getElementById(btn.dataset.toggle)
+  if (!input) return
+  const show = input.type === 'password'
+  input.type = show ? 'text' : 'password'
+  btn.setAttribute('aria-pressed', String(show))
+  btn.querySelector('use').setAttribute('href', show ? '#i-eye-off' : '#i-eye')
+  btn.querySelector('span').textContent = show ? '隐藏' : '显示'
 }
 
 async function loadConfig(silent = false) {
@@ -305,22 +435,17 @@ async function loadConfig(silent = false) {
     els.seedHex.value = cfg.seedHex ?? ''
     els.generation.value = cfg.generation ?? 0
     els.pskHex.value = cfg.pskHex ?? ''
-    renderServers(cfg.servers || [])
+    els.transportInput.value = cfg.transport || 'udp'
+    els.splitTunnel.checked = cfg.splitTunnel !== false
+    els.portHopCount.value = cfg.portHopCount || 1
+    els.portHopSpread.value = cfg.portHopSpread || 0
+    if (Array.isArray(cfg.servers)) renderServers(cfg.servers)
+    await refreshServers()
     if (!silent) log('配置已载入。')
   } catch (e) {
     log(`读取配置失败：${e}`, 'error')
   }
 }
-
-document.querySelectorAll('[data-toggle]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const input = document.getElementById(btn.dataset.toggle)
-    if (!input) return
-    const isPassword = input.type === 'password'
-    input.type = isPassword ? 'text' : 'password'
-    btn.textContent = isPassword ? '隐藏' : '显示'
-  })
-})
 
 function applyProfile(p) {
   if (!p) return
@@ -351,7 +476,8 @@ async function importInvite(text) {
   try {
     const p = await api.ParseInvite(raw)
     applyProfile(p)
-    log(`已导入 ${els.serverAddr.value}，密钥未写入日志。`)
+    els.inviteInput.value = raw
+    log(`已导入 ${els.serverAddr.value}。密钥未写入日志。`, 'ok')
   } catch (e) {
     log(`导入失败：${e}`, 'error')
   }
@@ -373,21 +499,35 @@ async function copyInvite() {
       generation,
     )
     if (link) els.inviteInput.value = link
-    log('邀请链接已复制。它就是密钥，不要发到公开群。')
+    log('邀请链接已复制。它就是密钥，不要发到公开群。', 'ok')
   } catch (e) {
     log(`复制失败：${e}`, 'error')
   }
 }
-els.connectBtn.addEventListener('click', connect)
-els.disconnectBtn.addEventListener('click', disconnect)
+
+els.connectBtn.addEventListener('click', () => {
+  if (currentStatus === 'connected') disconnect()
+  else if (currentStatus !== 'connecting') connect()
+})
 els.importBtn.addEventListener('click', () => importInvite())
 els.copyInviteBtn.addEventListener('click', copyInvite)
+els.inviteInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') {
+    ev.preventDefault()
+    importInvite()
+  }
+})
 els.inviteInput.addEventListener('paste', (ev) => {
   const text = ev.clipboardData?.getData('text') || ''
   if (text.includes('chimera://') || text.trim().startsWith('{')) {
     setTimeout(() => importInvite(text), 0)
   }
 })
+document.querySelectorAll('[data-toggle]').forEach((btn) => {
+  btn.addEventListener('click', () => toggleSecret(btn))
+})
+els.clearLogsBtn.addEventListener('click', clearLogs)
+
 els.saveServerBtn.addEventListener('click', async () => {
   const api = getAPI()
   const addr = els.serverAddr.value.trim()
@@ -399,14 +539,18 @@ els.saveServerBtn.addEventListener('click', async () => {
     log('先填写服务器地址再保存入口。', 'warn')
     return
   }
-  await api.RememberServer(els.serverName.value.trim() || addr, addr)
-  await refreshServers()
-  log(`已保存入口 ${addr}`)
+  try {
+    await api.RememberServer(els.serverName.value.trim() || addr, addr)
+    await refreshServers()
+    log(`已保存入口 ${addr}`)
+  } catch (e) {
+    log(`保存入口失败：${e}`, 'error')
+  }
 })
 els.trayBtn.addEventListener('click', async () => {
   const api = getAPI()
   if (!api?.HideToTray) return
-  log('窗口已隐藏，在托盘图标上单击可再打开。')
+  log('窗口已隐藏。在托盘图标上单击可再打开。')
   await api.HideToTray()
 })
 
@@ -414,7 +558,8 @@ els.trayBtn.addEventListener('click', async () => {
   const api = await waitForAPI()
   if (!api) {
     log(`Wails 绑定不可用：${describeGoBindings()}。请运行发布包里的 ChimeraClient.exe。`, 'error')
-    updateBadge('error', 'Wails binding missing')
+    renderStatus('error', 'Wails binding missing')
+    els.connectBtn.disabled = true
     return
   }
 
@@ -427,4 +572,7 @@ els.trayBtn.addEventListener('click', async () => {
     await refreshTraffic()
   }, 1000)
   window.addEventListener('resize', drawSpark)
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(drawSpark).observe(els.spark)
+  }
 })()

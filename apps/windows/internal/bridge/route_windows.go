@@ -61,9 +61,11 @@ func enumerateAdapters() ([]adapterInfo, error) {
 
 // Install adds the default-route takeover. tunName is the Wintun adapter
 // name ("Chimera"), tunIP the assigned client address (e.g. 10.99.0.5),
-// serverAddr the host[:port] of the UDP endpoint. serverAddr may be empty
-// to install the halves without the server exception (tests / loopback).
-func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string) error {
+// serverAddr the host[:port] of the UDP/TCP endpoint. serverAddr may be
+// empty to install the halves without the server exception (tests /
+// loopback). bypassPrivate additionally pins private/loopback/link-local
+// destinations to the physical adapter for split routing.
+func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.specs) != 0 {
@@ -112,12 +114,16 @@ func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string) error {
 		t.specs = nil
 	}
 
+	var phys adapterInfo
+	havePhys := false
+
 	// Server /32 exception first: never route the underlay through itself.
 	if serverIP != nil {
-		phys, err := choosePhysicalAdapter(adapters, serverIP, tunName)
+		phys, err = choosePhysicalAdapter(adapters, serverIP, tunName)
 		if err != nil {
 			return err
 		}
+		havePhys = true
 		spec := routeSpec{prefix: fmt.Sprintf("%s/32", serverIP), ifIndex: phys.index, ifName: phys.name, nexthop: phys.gateway}
 		if err := addRoute(spec); !isRouteExistsErr(err) {
 			rollback()
@@ -126,6 +132,30 @@ func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string) error {
 		t.specs = append(t.specs, spec)
 		installed++
 		log.Printf("[route] server %s/32 -> %s (gw %s)", serverIP, phys.name, phys.gateway)
+	}
+
+	// Split mode: pin private/local ranges to the physical adapter. These
+	// are more specific than the half-default TUN routes and keep LAN,
+	// printers, loopback, link-local and multicast off the tunnel.
+	if bypassPrivate {
+		if !havePhys {
+			phys, err = choosePhysicalAdapter(adapters, nil, tunName)
+			if err != nil {
+				rollback()
+				return err
+			}
+			havePhys = true
+		}
+		for _, prefix := range privateBypassRoutes {
+			spec := routeSpec{prefix: prefix, ifIndex: phys.index, ifName: phys.name, nexthop: phys.gateway}
+			if err := addRoute(spec); !isRouteExistsErr(err) {
+				rollback()
+				return fmt.Errorf("add bypass %s on %s: %w", prefix, phys.name, err)
+			}
+			t.specs = append(t.specs, spec)
+			installed++
+		}
+		log.Printf("[route] split mode: %d private/local bypass routes -> %s", len(privateBypassRoutes), phys.name)
 	}
 
 	// Then the two half-default routes through the TUN.

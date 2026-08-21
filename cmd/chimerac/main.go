@@ -19,6 +19,7 @@ func main() {
 	check := flag.Bool("check", false, "handshake + assigned IP + ICMP probe; no TUN")
 	jsonOut := flag.Bool("json", false, "print -check result as JSON")
 	server := flag.String("server", "", "override config serverAddr (host:port)")
+	transport := flag.String("transport", "", "override config transport (udp or tcp)")
 	takeRoute := flag.Bool("take-route", false, "install 0.0.0.0/1 + 128.0.0.0/1 via TUN (requires root)")
 	timeout := flag.Duration("timeout", 12*time.Second, "handshake / probe deadline")
 	tunName := flag.String("tun", "", "override TUN interface name (default chimerac0)")
@@ -44,6 +45,9 @@ func main() {
 	}
 	if *server != "" {
 		cfg.ServerAddr = *server
+	}
+	if *transport != "" {
+		cfg.Transport = *transport
 	}
 	if *tunName != "" {
 		cfg.TunName = *tunName

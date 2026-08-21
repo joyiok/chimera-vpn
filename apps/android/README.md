@@ -10,6 +10,7 @@ apps/android/
 ├── build.gradle.kts
 ├── gradle.properties
 ├── build-android-core.sh
+├── design/               # AI 生成的启动器图标与背景纹理源文件
 ├── README.md
 └── app/
     ├── build.gradle.kts
@@ -93,6 +94,9 @@ PR / `main` 推送 / 手动 `workflow_dispatch` 都会跑。Debug APK 可 sidelo
   1. `bind.Receive(handle)` → 写入 TUN 文件描述符（Go 协议栈发往设备的 IP 包）；
   2. TUN 文件描述符读取（单次最多 32767 字节）→ `bind.Send(handle, packet)`（设备发往协议栈的 IP 包）。
 - 通知栏显示上下行流量，并提供「断开」「重连」；可添加快捷设置磁贴开关 VPN。
+- 界面「手动填写」中可选传输（`udp` / `tcp` / `websocket`）：UDP 被 QoS 时选 `tcp`，需要 HTTP/WebSocket 伪装时选 `websocket`。
+- 支持端口跳跃：填写端口数和偏移范围后，客户端会在 seed+generation 派生的端口序列上自动探测；需与服务端 `port_hop_count/port_hop_spread` 一致。
+- 默认开启分流：`res/values/split_routes.xml` 里的公网 IPv4 白名单走 VPN，局域网/私网/链路本地/组播直连；关闭开关即全局模式。
 - 入站静默 90s（`IdleMillis`）或 Receive 失败时，先对新 UDP 套接字 `protect`，再换 Go 会话；分配地址变了才重建 TUN。
 - 断开时先关闭 TUN 文件描述符，再调用 `bind.Bind.stop(handle)`。
 

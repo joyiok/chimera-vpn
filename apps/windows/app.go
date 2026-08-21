@@ -22,12 +22,18 @@ const DefaultServerAddr = "127.0.0.1:4789"
 // appConfig 是持久化到可执行文件旁的 JSON 配置。
 // 字段名与前端 Config() 返回的 map key 保持一致（camelCase）。
 type appConfig struct {
-	SeedHex    string        `json:"seedHex"`
-	Generation uint64        `json:"generation"`
-	PSKHex     string        `json:"pskHex"`
-	ServerAddr string        `json:"serverAddr"`
-	TunIP      string        `json:"tunIP"` // fallback when the server has no client_cidr
-	Servers    []savedServer `json:"servers,omitempty"`
+	SeedHex    string `json:"seedHex"`
+	Generation uint64 `json:"generation"`
+	PSKHex     string `json:"pskHex"`
+	ServerAddr string `json:"serverAddr"`
+	// Transport is the underlay: "udp" (default) or "tcp" for networks
+	// that throttle UDP.
+	Transport     string        `json:"transport"`
+	SplitTunnel   bool          `json:"splitTunnel"`
+	PortHopCount  int           `json:"portHopCount"`
+	PortHopSpread int           `json:"portHopSpread"`
+	TunIP         string        `json:"tunIP"` // fallback when the server has no client_cidr
+	Servers       []savedServer `json:"servers,omitempty"`
 }
 
 type savedServer struct {
@@ -73,9 +79,64 @@ func (a *ChimeraApp) startup(ctx context.Context) {
 // Start 校验参数、保存配置到可执行文件旁，并启动协议传输层。
 // 任何参数非法或启动失败都会返回 error，并把状态置为 error。
 func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, serverAddr string) error {
+	a.mu.Lock()
+	split := a.cfg.SplitTunnel
+	a.mu.Unlock()
+	return a.start(seedHex, generation, pskHex, serverAddr, "", split, a.cfg.PortHopCount, a.cfg.PortHopSpread)
+}
+
+// StartWithTransport 是 Start 的扩展，允许选择 udp 或 tcp 底层传输。
+// 旧前端继续调用 Start 时会沿用上次保存的 transport（默认 udp）。
+func (a *ChimeraApp) StartWithTransport(seedHex string, generation uint64, pskHex string, serverAddr string, transport string) error {
+	a.mu.Lock()
+	hops := a.cfg.PortHopCount
+	spread := a.cfg.PortHopSpread
+	a.mu.Unlock()
+	return a.start(seedHex, generation, pskHex, serverAddr, transport, true, hops, spread)
+}
+
+// StartAdvanced 是完整参数入口：transport + splitTunnel。
+func (a *ChimeraApp) StartAdvanced(seedHex string, generation uint64, pskHex string, serverAddr string, transport string, splitTunnel bool) error {
+	a.mu.Lock()
+	hops := a.cfg.PortHopCount
+	spread := a.cfg.PortHopSpread
+	a.mu.Unlock()
+	return a.start(seedHex, generation, pskHex, serverAddr, transport, splitTunnel, hops, spread)
+}
+
+// StartWithOptions 是完整参数入口：传输 + 分流 + 端口跳跃。
+func (a *ChimeraApp) StartWithOptions(seedHex string, generation uint64, pskHex string, serverAddr string, transport string, splitTunnel bool, portHopCount int, portHopSpread int) error {
+	return a.start(seedHex, generation, pskHex, serverAddr, transport, splitTunnel, portHopCount, portHopSpread)
+}
+
+func (a *ChimeraApp) start(seedHex string, generation uint64, pskHex string, serverAddr string, transport string, splitTunnel bool, portHopCount int, portHopSpread int) error {
 	seedHex = strings.TrimSpace(seedHex)
 	pskHex = strings.TrimSpace(pskHex)
 	serverAddr = strings.TrimSpace(serverAddr)
+	transport = strings.ToLower(strings.TrimSpace(transport))
+	if transport == "" {
+		a.mu.Lock()
+		transport = a.cfg.Transport
+		a.mu.Unlock()
+	}
+	if transport == "" {
+		transport = "udp"
+	}
+	if transport != "udp" && transport != "tcp" && transport != "websocket" && transport != "wss" {
+		err := fmt.Errorf("transport 必须是 udp 或 tcp")
+		a.setError(err)
+		return err
+	}
+	if portHopCount < 0 || portHopCount > 16 {
+		err := fmt.Errorf("portHopCount 必须在 0-16 之间")
+		a.setError(err)
+		return err
+	}
+	if portHopCount > 1 && portHopSpread <= 0 {
+		err := fmt.Errorf("portHopCount > 1 时必须设置 portHopSpread")
+		a.setError(err)
+		return err
+	}
 
 	if err := validateHexField("seedHex", seedHex); err != nil {
 		a.setError(err)
@@ -92,11 +153,15 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 	}
 
 	cfg := appConfig{
-		SeedHex:    seedHex,
-		Generation: generation,
-		PSKHex:     pskHex,
-		ServerAddr: serverAddr,
-		TunIP:      "10.99.0.2",
+		SeedHex:       seedHex,
+		Generation:    generation,
+		PSKHex:        pskHex,
+		ServerAddr:    serverAddr,
+		Transport:     transport,
+		SplitTunnel:   splitTunnel,
+		PortHopCount:  portHopCount,
+		PortHopSpread: portHopSpread,
+		TunIP:         "10.99.0.2",
 	}
 
 	a.mu.Lock()
@@ -130,7 +195,7 @@ func (a *ChimeraApp) Start(seedHex string, generation uint64, pskHex string, ser
 		log.Printf("[ChimeraApp] 服务器未分配地址（%v），使用回退地址 %s", err, cfg.TunIP)
 		ip = cfg.TunIP
 	}
-	if err := startPacketBridge(ip); err != nil {
+	if err := startPacketBridge(ip, cfg.SplitTunnel); err != nil {
 		_ = stopTransport()
 		a.setError(err)
 		return err
@@ -219,12 +284,16 @@ func (a *ChimeraApp) Config() (map[string]any, error) {
 	defer a.mu.Unlock()
 
 	return map[string]any{
-		"seedHex":    a.cfg.SeedHex,
-		"generation": a.cfg.Generation,
-		"pskHex":     a.cfg.PSKHex,
-		"serverAddr": a.cfg.ServerAddr,
-		"tunIP":      a.cfg.TunIP,
-		"servers":    a.cfg.Servers,
+		"seedHex":       a.cfg.SeedHex,
+		"generation":    a.cfg.Generation,
+		"pskHex":        a.cfg.PSKHex,
+		"serverAddr":    a.cfg.ServerAddr,
+		"transport":     a.cfg.Transport,
+		"splitTunnel":   a.cfg.SplitTunnel,
+		"portHopCount":  a.cfg.PortHopCount,
+		"portHopSpread": a.cfg.PortHopSpread,
+		"tunIP":         a.cfg.TunIP,
+		"servers":       a.cfg.Servers,
 	}, nil
 }
 
@@ -423,6 +492,19 @@ func (a *ChimeraApp) loadConfig() error {
 	var cfg appConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("解析配置 %s 失败: %w", path, err)
+	}
+	// 兼容旧配置文件：没有 transport/splitTunnel 字段时启用推荐默认值。
+	var probe map[string]any
+	if err := json.Unmarshal(data, &probe); err == nil {
+		if _, ok := probe["transport"]; !ok || cfg.Transport == "" {
+			cfg.Transport = "udp"
+		}
+		if _, ok := probe["splitTunnel"]; !ok {
+			cfg.SplitTunnel = true
+		}
+		if _, ok := probe["portHopCount"]; !ok {
+			cfg.PortHopCount = 1
+		}
 	}
 
 	a.mu.Lock()

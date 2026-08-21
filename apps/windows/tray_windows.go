@@ -122,7 +122,12 @@ func stopTray() {
 func runTray() {
 	className, _ := windows.UTF16PtrFromString("ChimeraTrayClass")
 	inst, _, _ := procGetModuleHandleW.Call(0)
-	icon, _, _ := procLoadIconW.Call(0, uintptr(idiApplication))
+	// Wails 用 winres 把 build/windows/icon.ico 写成 RT_GROUP_ICON ID 3；
+	// 优先加载自定义图标，失败时回退到系统默认应用图标（例如 wails dev）。
+	icon, _, _ := procLoadIconW.Call(inst, uintptr(3))
+	if icon == 0 {
+		icon, _, _ = procLoadIconW.Call(0, uintptr(idiApplication))
+	}
 
 	wc := wndClassEx{
 		LpfnWndProc:   trayWndProc,

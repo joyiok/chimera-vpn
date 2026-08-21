@@ -89,7 +89,7 @@ func getAssignedIP(ctx context.Context) (string, error) {
 
 // startPacketBridge 创建 Wintun 虚拟网卡、启动双向包泵，并接管默认路由。
 // 路由接管失败按非致命处理：隧道仍可用（用户手工路由），只记日志。
-func startPacketBridge(ip string) error {
+func startPacketBridge(ip string, splitTunnel bool) error {
 	if transportClient == nil {
 		return fmt.Errorf("transport not started")
 	}
@@ -102,10 +102,10 @@ func startPacketBridge(ip string) error {
 	log.Printf("[coreBridge] Wintun packet bridge started with %s/24", ip)
 
 	serverAddr := transportClient.Config().ServerAddr
-	if err := routeTakeover.Install(b.Name(), ip, serverAddr); err != nil {
+	if err := routeTakeover.Install(b.Name(), ip, serverAddr, splitTunnel); err != nil {
 		log.Printf("[coreBridge] 默认路由接管失败（隧道仍可用，可手工添加路由）: %v", err)
 	} else {
-		log.Printf("[coreBridge] 默认路由已接管: 0.0.0.0/1 + 128.0.0.0/1 -> %s，服务器例外 %s", b.Name(), serverAddr)
+		log.Printf("[coreBridge] 默认路由已接管: 0.0.0.0/1 + 128.0.0.0/1 -> %s，服务器例外 %s（split=%v）", b.Name(), serverAddr, splitTunnel)
 	}
 	return nil
 }

@@ -25,8 +25,25 @@ var (
 	clients       = map[int64]*core.Client{}
 )
 
-// Start creates a client tunnel. Returns a handle for Stop/Send/Receive.
+// Start creates a UDP client tunnel. Returns a handle for Stop/Send/Receive.
 func Start(seedHex string, generation int64, pskHex string, serverAddr string) (int64, error) {
+	return start(seedHex, generation, pskHex, serverAddr, "udp", 1, 0)
+}
+
+// StartTransport creates a client tunnel over "udp" or "tcp".
+// TCP uses the same generated protocol bytes in 2-byte stream frames and is
+// the recommended mode on networks that aggressively QoS/throttle UDP.
+func StartTransport(seedHex string, generation int64, pskHex string, serverAddr string, transport string) (int64, error) {
+	return start(seedHex, generation, pskHex, serverAddr, transport, 1, 0)
+}
+
+// StartTransportWithHop is StartTransport plus deterministic port hopping.
+// count<=1 disables hopping; spread<=0 uses the core default (2048).
+func StartTransportWithHop(seedHex string, generation int64, pskHex string, serverAddr string, transport string, hopCount int64, hopSpread int64) (int64, error) {
+	return start(seedHex, generation, pskHex, serverAddr, transport, hopCount, hopSpread)
+}
+
+func start(seedHex string, generation int64, pskHex string, serverAddr string, transport string, hopCount int64, hopSpread int64) (int64, error) {
 	if generation < 0 {
 		return 0, fmt.Errorf("generation must be >= 0")
 	}
@@ -38,6 +55,7 @@ func Start(seedHex string, generation int64, pskHex string, serverAddr string) (
 		KeepaliveInterval: 25 * time.Second,
 		PSKHex:            pskHex,
 		ServerAddr:        serverAddr,
+		Transport:         transport,
 	})
 	if err != nil {
 		return 0, err

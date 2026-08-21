@@ -6,8 +6,9 @@ import (
 	"syscall"
 )
 
-// UDPFileDescriptor returns the underlying UDP socket fd so a platform
-// shell can exclude it from the VPN path (Android VpnService.protect).
+// UDPFileDescriptor returns the underlying transport socket fd so a platform
+// shell can exclude it from the VPN path (Android VpnService.protect). Both
+// UDP and TCP stream transports expose this through syscall.Conn.
 // The fd stays owned by the client; the caller must not close it.
 func (c *Client) UDPFileDescriptor() (int, error) {
 	c.mu.Lock()

@@ -37,7 +37,7 @@ func getAssignedIP(ctx context.Context) (string, error) {
 	return "", errors.New("transport not compiled: rebuild with -tags with_transport")
 }
 
-func startPacketBridge(ip string) error {
+func startPacketBridge(ip string, splitTunnel bool) error {
 	return errors.New("transport not compiled: rebuild with -tags with_transport")
 }
 
