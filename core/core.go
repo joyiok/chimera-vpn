@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,6 +99,11 @@ type Config struct {
 	// DisableShape turns off datagram length shaping (default: pad frames
 	// to compiler.DefaultShapeBuckets).
 	DisableShape bool
+	// ShapeBuckets overrides the genome-selected packet-length ladder.
+	// When empty, each generation picks its own ladder from the compiled
+	// fingerprint. Derive a ladder that matches a chosen cover application
+	// with: chimera-eval -pcap real-traffic.pcap -ladder
+	ShapeBuckets []int
 	// JitterMax smears send timing with a truncated exponential in
 	// (0, JitterMax]. 0 disables jitter. Production servers should use
 	// tunnel.DefaultJitterMax.
@@ -165,6 +171,22 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.GenerationRotation < 0 {
 		cfg.GenerationRotation = 0
+	}
+	if len(cfg.ShapeBuckets) > 0 {
+		if len(cfg.ShapeBuckets) > 16 {
+			return cfg, fmt.Errorf("shape_buckets: at most 16 entries")
+		}
+		sorted := append([]int(nil), cfg.ShapeBuckets...)
+		sort.Ints(sorted)
+		for i, b := range sorted {
+			if b < 64 || b > 1452 {
+				return cfg, fmt.Errorf("shape_buckets[%d]=%d out of range [64, 1452]", i, b)
+			}
+			if i > 0 && sorted[i] == sorted[i-1] {
+				return cfg, fmt.Errorf("shape_buckets: duplicate entry %d", b)
+			}
+		}
+		cfg.ShapeBuckets = sorted
 	}
 	if cfg.Cipher != "" && !genome.KnownCipher(cfg.Cipher) {
 		return cfg, fmt.Errorf("unknown cipher %q", cfg.Cipher)
@@ -383,7 +405,7 @@ func dialSession(cfg Config, generation uint64, handshakeTimeout time.Duration) 
 			return nil, nil, err
 		}
 		t := tunnel.NewPacketTunnel(conn, peer, sess)
-		configureTunnel(t, cfg, compiler.ShapeBucketsForGenome(g))
+		configureTunnel(t, cfg, cfg.resolveShapeLadder(compiler.ShapeBucketsForGenome(g)))
 		return t, conn, nil
 	}
 
@@ -417,8 +439,18 @@ func dialSession(cfg Config, generation uint64, handshakeTimeout time.Duration) 
 		return nil, nil, err
 	}
 	t := tunnel.NewPacketTunnel(conn, remote, sess)
-	configureTunnel(t, cfg, compiler.ShapeBucketsForGenome(g))
+	configureTunnel(t, cfg, cfg.resolveShapeLadder(compiler.ShapeBucketsForGenome(g)))
 	return t, conn, nil
+}
+
+// resolveShapeLadder picks the send-side length ladder: an explicit
+// ShapeBuckets override when configured, otherwise the genome-selected
+// ladder.
+func (cfg Config) resolveShapeLadder(genomeLadder []int) []int {
+	if len(cfg.ShapeBuckets) > 0 {
+		return cfg.ShapeBuckets
+	}
+	return genomeLadder
 }
 
 // configureTunnel applies the shared traffic-shaping settings for both UDP
@@ -681,7 +713,7 @@ func (s *Server) newMux(conn net.PacketConn, cps []*compiler.CompiledProtocol, p
 		WithJitter(s.cfg.JitterMax)
 	var txShapeBuckets []int
 	if !s.cfg.DisableShape {
-		txShapeBuckets = compiler.ShapeBucketsForGenome(cps[0].Genome)
+		txShapeBuckets = s.cfg.resolveShapeLadder(compiler.ShapeBucketsForGenome(cps[0].Genome))
 		mux.WithShapeBuckets(txShapeBuckets)
 	}
 	mux.WithTxMask(tunnel.NewNoiseTxMask(s.cfg.DecoyEvery, s.cfg.DecoyMaxPerSec, txShapeBuckets))
@@ -887,9 +919,11 @@ func (s *Server) handleStreamConn(ctx context.Context, conn net.Conn, cps []*com
 	s.teleHands.Add(1)
 	buckets := compiler.DefaultShapeBuckets
 	if !s.cfg.DisableShape {
+		ladder := compiler.DefaultShapeBuckets
 		if int(generation) < len(cps) {
-			buckets = compiler.ShapeBucketsForGenome(cps[generation].Genome)
+			ladder = compiler.ShapeBucketsForGenome(cps[generation].Genome)
 		}
+		buckets = s.cfg.resolveShapeLadder(ladder)
 		t.SetShapeBuckets(buckets)
 	}
 	t.SetJitter(s.cfg.JitterMax)

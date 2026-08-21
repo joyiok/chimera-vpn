@@ -42,6 +42,10 @@ type serverConfig struct {
 	// protocol window live, and pushes the new base to connected clients.
 	// 0 disables rotation.
 	GenerationRotationSec int `json:"generation_rotation_sec"`
+	// ShapeBuckets overrides the genome-selected packet-length ladder.
+	// Derive one from a real-traffic capture with:
+	// chimera-eval -pcap real.pcap -ladder
+	ShapeBuckets []int `json:"shape_buckets"`
 	// TLSCertFile / TLSKeyFile enable transport=wss.
 	TLSCertFile string    `json:"tls_cert_file"`
 	TLSKeyFile  string    `json:"tls_key_file"`
@@ -175,6 +179,7 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		PortHopCount:          cfg.PortHopCount,
 		PortHopSpread:         cfg.PortHopSpread,
 		GenerationRotation:    time.Duration(cfg.GenerationRotationSec) * time.Second,
+		ShapeBuckets:          cfg.ShapeBuckets,
 		TLSCertFile:           cfg.TLSCertFile,
 		TLSKeyFile:            cfg.TLSKeyFile,
 		ClientCIDR:            cfg.ClientCIDR,

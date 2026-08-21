@@ -68,7 +68,16 @@ The same compiled datagrams ride over multiple underlays:
 - TCP listeners apply configurable unauthenticated-first-frame probe defense: `close`, `silent` (default), or `tls` (standard fatal alert for TLS-looking probes), with timeout and concurrency caps.
 - **Send-side noise mask**: after every N real writes the session emits one cryptographically random decoy frame (rate-capped). Receivers drop decoys via AEAD failure — no shared state.
 - **Port hopping**: the server binds the base port plus HMAC(seed, generation)-derived ports (count 1–16); clients probe the same sequence with a shortened 3s timeout. Works identically for UDP and TCP.
+- **Learned shape ladders**: `chimera-eval -pcap real.pcap -ladder` derives a packet-length ladder from a real-traffic capture (p10/p30/p50/p70/p90 quantiles); point `shape_buckets` at it on both ends and the tunnel's length distribution tracks the chosen cover application instead of a hardcoded ladder.
 - Per-genome shape ladders (five padding ladders selected by fingerprint), randomized keepalive intervals (75–125%), larger UDP socket buffers, zeroed ToS/DSCP.
+
+### Immune system and generation lifecycle
+
+The server is not a static target:
+
+- **Telemetry**: the handshake plane reports probe frames, replays, completed handshakes, and decoy replies.
+- **Threat response** (evaluated every 30s): elevated probing escalates the TCP first-frame defense from silent to TLS mimicry; high threat or observed replays escalate further and — when rotation is enabled — advance the base generation immediately; attack-level traffic goes to close. Everything de-escalates automatically after two calm windows.
+- **Generation rotation** (`generation_rotation_sec` in server.json): every interval the server advances its base protocol generation, swaps the accepted window live without restarting listeners, and pushes the new base to connected clients over an encrypted control frame. Clients adopt it for future handshakes; one-generation-stale clients reconnect through a backward-compatibility slot; rotation is deferred while handshakes are in flight. A fingerprinted protocol expires on a schedule instead of living forever.
 
 ---
 
@@ -132,7 +141,7 @@ app record s2c  : "payload from the other direction" (round trip OK)
 
 This is **not** a complete anti-censorship system for high-risk environments, but the data plane and daemon are hardened for production self-hosted VPN operation:
 
-- Implemented: protocol generation, AES-GCM / ChaCha20-Poly1305, UDP handshake (retransmit / decoys / silent drop), **UDP/TCP/WebSocket/WSS/HTTP(S) multi-transport**, multi-client multiplexing, automatic address assignment, Linux TUN bridging, Linux CLI client (probe + TUN), Windows route takeover, **LAN/private-network split tunneling** (Windows bypass routes + Android public-range whitelist), packet-mode ACK/SKIP, NAT keepalive, session quotas and rate limiting, packet-length shaping, send-side timing jitter, server generation window, per-session fault isolation in chimerad, printable handshake covers (gfw.report FEP Ex2/Ex4), server-first authenticated knock, handshake first-packet replay table, UDP socket buffer/ToS tuning, TCP first-frame probe defense (silent/tls mimicry + concurrency caps), **send-side noise mask**, **port hopping**, roaming session reclamation on the server, configurable tunnel DNS on Linux, restrictive ACL on the Windows config file.
+- Implemented: protocol generation, AES-GCM / ChaCha20-Poly1305, UDP handshake (retransmit / decoys / silent drop), **UDP/TCP/WebSocket/WSS/HTTP(S) multi-transport**, multi-client multiplexing, automatic address assignment, Linux TUN bridging, Linux CLI client (probe + TUN), Windows route takeover, **LAN/private-network split tunneling** (Windows bypass routes + Android public-range whitelist), packet-mode ACK/SKIP, NAT keepalive, session quotas and rate limiting, packet-length shaping, send-side timing jitter, server generation window, per-session fault isolation in chimerad, printable handshake covers (gfw.report FEP Ex2/Ex4), server-first authenticated knock, handshake first-packet replay table, UDP socket buffer/ToS tuning, TCP first-frame probe defense (silent/tls mimicry + concurrency caps), **send-side noise mask**, **port hopping**, roaming session reclamation on the server, configurable tunnel DNS on Linux, restrictive ACL on the Windows config file, **immune system** (telemetry-driven threat response), **scheduled generation rotation with client push**, **capture-derived shape ladders** (`chimera-eval -ladder` → `shape_buckets`).
 - Not implemented: on-device Android acceptance testing, lane B/C (CDN broadcast / real-application parasitism), full traffic morphing.
 - `EstimatedEntropyBits` is the generator's own bookkeeping approximation, not a security proof.
 

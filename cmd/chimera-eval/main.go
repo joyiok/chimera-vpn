@@ -22,16 +22,37 @@ func main() {
 	pcapPath := flag.String("pcap", "", "classic pcap file from tcpdump -w (not pcapng)")
 	port := flag.Int("port", 4789, "UDP port to keep; 0 = all UDP")
 	jsonOut := flag.Bool("json", false, "print JSON instead of text")
+	ladder := flag.Bool("ladder", false, "derive a shape-bucket ladder from the capture (packet-length quantiles) instead of scoring; feed the output to shape_buckets in server/client config")
 	flag.Parse()
 	if *pcapPath == "" {
-		fmt.Fprintf(os.Stderr, "usage: chimera-eval -pcap capture.pcap [-port 4789]\n")
+		fmt.Fprintf(os.Stderr, "usage: chimera-eval -pcap capture.pcap [-port 4789] [-ladder]\n")
 		os.Exit(2)
 	}
-	rep, err := evaluateFile(*pcapPath, *port)
+	pkts, err := loadPackets(*pcapPath, *port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "chimera-eval: %v\n", err)
 		os.Exit(1)
 	}
+	if *ladder {
+		buckets := deriveLadder(pkts)
+		if len(buckets) == 0 {
+			fmt.Fprintf(os.Stderr, "chimera-eval: no UDP packets matched -port %d\n", *port)
+			os.Exit(1)
+		}
+		if *jsonOut {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(map[string]any{"packets": len(pkts), "buckets": buckets}); err != nil {
+				fmt.Fprintf(os.Stderr, "chimera-eval: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		fmt.Printf("# shape ladder from %d packets (p10/p30/p50/p70/p90)\n", len(pkts))
+		fmt.Printf("\"shape_buckets\": [%s]\n", joinInts(buckets))
+		return
+	}
+	rep := evaluate(pkts)
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -42,6 +63,56 @@ func main() {
 		return
 	}
 	printReport(rep)
+}
+
+func loadPackets(path string, port int) ([]datum, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return readUDPPayloads(f, port)
+}
+
+// deriveLadder converts observed packet lengths into a send-side padding
+// ladder: the p10/p30/p50/p70/p90 length quantiles, clamped to the valid
+// bucket range and de-duplicated in ascending order. Shaping to these
+// buckets makes the tunnel's length distribution track the capture's.
+func deriveLadder(pkts []datum) []int {
+	if len(pkts) == 0 {
+		return nil
+	}
+	lens := make([]float64, 0, len(pkts))
+	for _, d := range pkts {
+		lens = append(lens, float64(len(d.payload)))
+	}
+	sort.Float64s(lens)
+	q := func(p float64) int {
+		v := int(math.Round(percentile(lens, p)))
+		switch {
+		case v < 64:
+			v = 64
+		case v > 1452:
+			v = 1452
+		}
+		return v
+	}
+	var out []int
+	for _, p := range []float64{0.10, 0.30, 0.50, 0.70, 0.90} {
+		b := q(p)
+		if len(out) == 0 || b > out[len(out)-1] {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func joinInts(xs []int) string {
+	parts := make([]string, len(xs))
+	for i, x := range xs {
+		parts[i] = fmt.Sprint(x)
+	}
+	return strings.Join(parts, ", ")
 }
 
 type report struct {

@@ -12,5 +12,6 @@
   "portHopCount": 1,
   "portHopSpread": 0,
   "tlsCAFile": "",
-  "tlsInsecureSkipVerify": false
+  "tlsInsecureSkipVerify": false,
+  "shape_buckets": []
 }

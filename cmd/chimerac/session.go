@@ -31,6 +31,7 @@ func clientCoreConfig(cfg clientConfig) core.Config {
 		TLSCAFile:             cfg.TLSCAFile,
 		TLSInsecureSkipVerify: cfg.TLSInsecure,
 		Cipher:                cfg.Cipher,
+		ShapeBuckets:          cfg.ShapeBuckets,
 		KeepaliveInterval:     25 * time.Second,
 	}
 }

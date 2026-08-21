@@ -29,5 +29,6 @@
   "port_hop_count": 1,
   "port_hop_spread": 0,
   "tls_cert_file": "",
-  "tls_key_file": ""
+  "tls_key_file": "",
+  "shape_buckets": []
 }

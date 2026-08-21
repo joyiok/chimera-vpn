@@ -2,11 +2,58 @@ package core
 
 import (
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
 	"chimera/internal/tunnel"
 )
+
+// TestShapeBucketsOverride verifies the config-level ladder override:
+// NormalizeConfig sorts and validates the entries, and a running mux uses
+// the override instead of the genome-selected ladder.
+func TestShapeBucketsOverride(t *testing.T) {
+	cfg := testConfig("127.0.0.1:0", "udp")
+	cfg.ShapeBuckets = []int{300, 100, 200} // deliberately unsorted
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.cfg.ShapeBuckets; !reflect.DeepEqual(got, []int{100, 200, 300}) {
+		t.Fatalf("NormalizeConfig did not sort buckets: %v", got)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if len(srv.muxes) == 0 {
+		t.Fatal("no mux started")
+	}
+	if got := srv.muxes[0].ShapeBuckets(); !reflect.DeepEqual(got, []int{100, 200, 300}) {
+		t.Fatalf("mux ladder = %v, want override", got)
+	}
+
+	for _, bad := range [][]int{{10}, {2000}, {100, 100}} {
+		badCfg := testConfig("127.0.0.1:0", "udp")
+		badCfg.ShapeBuckets = bad
+		if _, err := NewServer(badCfg); err == nil {
+			t.Fatalf("ShapeBuckets %v accepted", bad)
+		}
+	}
+}
+
+// TestResolveShapeLadder pins the preference order: explicit override wins
+// over the genome ladder; empty falls back.
+func TestResolveShapeLadder(t *testing.T) {
+	cfg := Config{ShapeBuckets: []int{128}}
+	if got := cfg.resolveShapeLadder([]int{999}); !reflect.DeepEqual(got, []int{128}) {
+		t.Fatalf("override ignored: %v", got)
+	}
+	empty := Config{}
+	if got := empty.resolveShapeLadder([]int{999}); !reflect.DeepEqual(got, []int{999}) {
+		t.Fatalf("fallback broken: %v", got)
+	}
+}
 
 // TestGenerationRotationPush verifies the full rotation loop: the server
 // advances its base on schedule, the connected client receives the

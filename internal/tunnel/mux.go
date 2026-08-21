@@ -582,6 +582,13 @@ func (m *ServerMux) PendingCount() int {
 	return len(m.pending)
 }
 
+// ShapeBuckets returns a copy of the send-side length ladder in force.
+func (m *ServerMux) ShapeBuckets() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]int(nil), m.shapeBuckets...)
+}
+
 // BroadcastControl sends one raw control payload (type byte + body) to
 // every established session. Best effort: fire-and-forget sends.
 func (m *ServerMux) BroadcastControl(payload []byte) {
