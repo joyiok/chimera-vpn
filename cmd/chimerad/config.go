@@ -37,6 +37,11 @@ type serverConfig struct {
 	PortHopCount int `json:"port_hop_count"`
 	// PortHopSpread bounds derived port offsets from the listen port.
 	PortHopSpread int `json:"port_hop_spread"`
+	// GenerationRotationSec > 0 enables scheduled base-generation rotation:
+	// every interval the server advances one generation, swaps the accepted
+	// protocol window live, and pushes the new base to connected clients.
+	// 0 disables rotation.
+	GenerationRotationSec int `json:"generation_rotation_sec"`
 	// TLSCertFile / TLSKeyFile enable transport=wss.
 	TLSCertFile string    `json:"tls_cert_file"`
 	TLSKeyFile  string    `json:"tls_key_file"`
@@ -169,6 +174,7 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		DecoyMaxPerSec:        cfg.DecoyMaxPerSec,
 		PortHopCount:          cfg.PortHopCount,
 		PortHopSpread:         cfg.PortHopSpread,
+		GenerationRotation:    time.Duration(cfg.GenerationRotationSec) * time.Second,
 		TLSCertFile:           cfg.TLSCertFile,
 		TLSKeyFile:            cfg.TLSKeyFile,
 		ClientCIDR:            cfg.ClientCIDR,

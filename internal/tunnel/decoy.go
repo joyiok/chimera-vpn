@@ -70,14 +70,17 @@ func decoySpec(cp *compiler.CompiledProtocol) (genome.MessageSpec, []byte) {
 }
 
 func (m *ServerMux) maybeDecoy(addr net.Addr, probe []byte) {
-	if m.decoy == nil || addr == nil {
+	m.mu.Lock()
+	decoy := m.decoy
+	m.mu.Unlock()
+	if decoy == nil || addr == nil {
 		return
 	}
-	frame, err := encodeDecoyFrame(m.decoy)
+	frame, err := encodeDecoyFrame(decoy)
 	if err != nil {
 		return
 	}
-	wire := compiler.WrapHandshakeDatagram(m.decoy.Genome, frame)
+	wire := compiler.WrapHandshakeDatagram(decoy.Genome, frame)
 	if !allowDecoySize(len(probe), len(wire)) {
 		return
 	}
@@ -87,6 +90,7 @@ func (m *ServerMux) maybeDecoy(addr net.Addr, probe []byte) {
 	if !ok {
 		return
 	}
+	m.telemetryEvent(TelemetryDecoy, addr)
 	writeDatagramAsync(m.conn, addr, wire, m.jitterMax)
 }
 

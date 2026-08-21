@@ -237,6 +237,12 @@ func (t *ServerTunnel) SendControl(payload []byte) error {
 	return t.SendPacket(append([]byte{ControlAssignIP}, payload...))
 }
 
+// SendControlRaw sends an already-framed control payload (type byte +
+// body), e.g. a ControlGeneration push.
+func (t *ServerTunnel) SendControlRaw(payload []byte) error {
+	return t.SendPacket(payload)
+}
+
 func (t *ServerTunnel) ReceivePacket() ([]byte, error) {
 	select {
 	case pkt, ok := <-t.recv:
@@ -368,6 +374,7 @@ type ServerMux struct {
 	jitterMax    time.Duration
 	cps          []*compiler.CompiledProtocol
 	replays      *replayCache
+	telemetry    func(TelemetryKind, net.Addr)
 
 	mu               sync.Mutex
 	pending          map[string]*pendingHandshake
@@ -492,12 +499,42 @@ func (m *ServerMux) WithProtocols(cps []*compiler.CompiledProtocol) *ServerMux {
 	if len(cps) == 0 {
 		return m
 	}
-	m.cps = append([]*compiler.CompiledProtocol(nil), cps...)
-	m.cp = cps[0]
+	m.mu.Lock()
+	m.setProtocolsLocked(cps)
+	m.mu.Unlock()
 	return m
 }
 
+// SetProtocols atomically swaps the accepted protocol window (generation
+// rotation). Established sessions keep their negotiated keys; new
+// handshakes use the new window immediately.
+func (m *ServerMux) SetProtocols(cps []*compiler.CompiledProtocol) {
+	if len(cps) == 0 {
+		return
+	}
+	m.mu.Lock()
+	m.setProtocolsLocked(cps)
+	m.mu.Unlock()
+}
+
+func (m *ServerMux) setProtocolsLocked(cps []*compiler.CompiledProtocol) {
+	m.cps = append([]*compiler.CompiledProtocol(nil), cps...)
+	m.cp = cps[0]
+	// Deliberately leave m.decoy alone: it is either an independent decoy
+	// species (WithDecoy) or nil (DisableDecoy). Pointing it at cps[0]
+	// would make decoy frames decodable by real clients of the same
+	// generation, letting a decoy reply complete a live handshake.
+}
+
 func (m *ServerMux) protocolList() []*compiler.CompiledProtocol {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.protocolListLocked()
+}
+
+// protocolListLocked is protocolList for callers already holding m.mu
+// (selectHandshake runs inside the read loop's critical section).
+func (m *ServerMux) protocolListLocked() []*compiler.CompiledProtocol {
 	if len(m.cps) > 0 {
 		return m.cps
 	}
@@ -505,6 +542,58 @@ func (m *ServerMux) protocolList() []*compiler.CompiledProtocol {
 		return []*compiler.CompiledProtocol{m.cp}
 	}
 	return nil
+}
+
+// TelemetryKind classifies one observable handshake-plane event. The
+// server's immune loop aggregates these to detect active probing.
+type TelemetryKind string
+
+const (
+	// TelemetryProbe: a first datagram failed to authenticate — random
+	// probe, scanner, or garbage.
+	TelemetryProbe TelemetryKind = "probe"
+	// TelemetryReplay: an authenticated handshake frame replayed a
+	// previously seen first packet / knock.
+	TelemetryReplay TelemetryKind = "replay"
+	// TelemetryHandshake: a handshake completed successfully.
+	TelemetryHandshake TelemetryKind = "handshake"
+	// TelemetryDecoy: a decoy reply was sent to an unauthenticated probe.
+	TelemetryDecoy TelemetryKind = "decoy"
+)
+
+// WithTelemetry installs a callback invoked for every handshake-plane
+// event. The callback must be cheap and non-blocking: it runs on the mux
+// read loop.
+func (m *ServerMux) WithTelemetry(fn func(TelemetryKind, net.Addr)) *ServerMux {
+	m.telemetry = fn
+	return m
+}
+
+func (m *ServerMux) telemetryEvent(kind TelemetryKind, addr net.Addr) {
+	if m.telemetry != nil {
+		m.telemetry(kind, addr)
+	}
+}
+
+// PendingCount returns the number of in-flight handshakes.
+func (m *ServerMux) PendingCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.pending)
+}
+
+// BroadcastControl sends one raw control payload (type byte + body) to
+// every established session. Best effort: fire-and-forget sends.
+func (m *ServerMux) BroadcastControl(payload []byte) {
+	m.mu.Lock()
+	tuns := make([]*ServerTunnel, 0, len(m.established))
+	for _, t := range m.established {
+		tuns = append(tuns, t)
+	}
+	m.mu.Unlock()
+	for _, t := range tuns {
+		_ = t.SendControlRaw(payload)
+	}
 }
 
 // Run drives the reader and retransmit timer until ctx is cancelled or the
@@ -647,13 +736,16 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 			m.mu.Unlock()
 			return
 		}
-		if m.maxSessions > 0 && len(m.established) >= m.maxSessions {
+		// Count in-flight handshakes against the session cap too: two
+		// clients racing under load could otherwise both pass the
+		// established-only check and both get published.
+		if m.maxSessions > 0 && len(m.established)+len(m.pending) >= m.maxSessions {
 			m.lastCreate[key] = now
 			m.mu.Unlock()
 			m.maybeDecoy(addr, data)
 			return
 		}
-		h, primed, err := m.selectHandshake(data)
+		h, primed, err := m.selectHandshake(addr, data)
 		if err != nil {
 			m.mu.Unlock()
 			m.maybeDecoy(addr, data)
@@ -680,8 +772,9 @@ func (m *ServerMux) handleDatagram(addr net.Addr, data []byte) {
 // not consume the datagram twice. Server-first knocks must verify a PSK
 // MAC under the base generation cover — a knock cannot name a generation,
 // and an unauthenticated probe must not elicit the real first frame.
-func (m *ServerMux) selectHandshake(data []byte) (*compiler.Handshake, bool, error) {
-	cps := m.protocolList()
+func (m *ServerMux) selectHandshake(addr net.Addr, data []byte) (*compiler.Handshake, bool, error) {
+	// Caller holds m.mu; use the lock-free protocol accessor.
+	cps := m.protocolListLocked()
 	if len(cps) == 0 {
 		return nil, false, errors.New("mux has no protocol")
 	}
@@ -714,6 +807,7 @@ func (m *ServerMux) selectHandshake(data []byte) (*compiler.Handshake, bool, err
 		}
 		if err := h.RecvStep(trimmed); err == nil {
 			if m.replays.seen(trimmed) {
+				m.telemetryEvent(TelemetryReplay, addr)
 				return nil, false, errProbe
 			}
 			return h, true, nil
@@ -732,6 +826,7 @@ func (m *ServerMux) selectHandshake(data []byte) (*compiler.Handshake, bool, err
 			return nil, false, errProbe
 		}
 		if m.replays.seen(compiler.KnockReplayKey(inner)) {
+			m.telemetryEvent(TelemetryReplay, addr)
 			return nil, false, errProbe
 		}
 		return serverFirst, false, nil
@@ -894,6 +989,7 @@ func (m *ServerMux) finishHandshake(p *pendingHandshake) {
 	if err != nil {
 		return
 	}
+	m.telemetryEvent(TelemetryHandshake, p.addr)
 	tun := &ServerTunnel{
 		conn:       m.conn,
 		peer:       p.addr,
@@ -953,6 +1049,7 @@ func (m *ServerMux) abandonPending(addr net.Addr) {
 	m.mu.Lock()
 	delete(m.pending, key)
 	m.mu.Unlock()
+	m.telemetryEvent(TelemetryProbe, addr)
 }
 
 // Accept returns the next completed client session.

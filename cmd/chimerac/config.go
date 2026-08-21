@@ -20,9 +20,9 @@ type clientConfig struct {
 	Generation       uint64 `json:"generation"`
 	PSKHex           string `json:"pskHex"`
 	Cipher           string `json:"cipher"`
-	TunName          string   `json:"tunName"`
-	MTU              int      `json:"mtu"`
-	TakeDefaultRoute bool     `json:"takeDefaultRoute"`
+	TunName          string `json:"tunName"`
+	MTU              int    `json:"mtu"`
+	TakeDefaultRoute bool   `json:"takeDefaultRoute"`
 	// DNSServers overrides the resolvers pushed onto the TUN when route
 	// takeover succeeds (default 1.1.1.1 / 8.8.8.8). Only used with
 	// systemd-resolved; see dns_linux.go.

@@ -56,6 +56,11 @@ type Config struct {
 	// PortHopSpread bounds the derived port offset from the base port.
 	// <= 0 uses 2048.
 	PortHopSpread int
+	// GenerationRotation > 0 enables scheduled base-generation rotation:
+	// every interval the server advances one generation, swaps the accepted
+	// window live, and pushes the new base to connected clients via
+	// ControlGeneration. 0 disables rotation.
+	GenerationRotation time.Duration
 	// TLSCertFile / TLSKeyFile enable wss on the server.
 	TLSCertFile string
 	TLSKeyFile  string
@@ -158,6 +163,9 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	if cfg.PortHopCount > 1 && cfg.PortHopSpread <= 0 {
 		cfg.PortHopSpread = 2048
 	}
+	if cfg.GenerationRotation < 0 {
+		cfg.GenerationRotation = 0
+	}
 	if cfg.Cipher != "" && !genome.KnownCipher(cfg.Cipher) {
 		return cfg, fmt.Errorf("unknown cipher %q", cfg.Cipher)
 	}
@@ -194,6 +202,11 @@ type Client struct {
 	conn net.PacketConn
 	tun  *tunnel.PacketTunnel
 	gen  uint64 // generation the current session actually used
+
+	// genBase tracks generation pushes received on the live session
+	// (ControlGeneration). Reconnects dial the new base directly instead
+	// of re-probing the whole window.
+	genBase atomic.Uint64
 }
 
 // NewClient prepares a client; Start establishes the tunnel.
@@ -233,12 +246,25 @@ func (c *Client) StartContext(ctx context.Context) error {
 			}
 			return lastErr
 		}
-		gen := c.cfg.Generation + attempt
+		gen := c.BaseGeneration() + attempt
 		tun, conn, err := startSessionCtx(ctx, c.cfg, gen)
 		if err == nil {
 			c.conn = conn
 			c.tun = tun
 			c.gen = gen
+			// Track server-pushed generation rotation so reconnects dial
+			// the new base directly.
+			tun.SetOnGeneration(func(g uint64) {
+				for {
+					cur := c.genBase.Load()
+					if g <= cur || c.genBase.CompareAndSwap(cur, g) {
+						return
+					}
+				}
+			})
+			if pushed := tun.RemoteGeneration(); pushed > c.genBase.Load() {
+				c.genBase.Store(pushed)
+			}
 			return nil
 		}
 		lastErr = err
@@ -247,6 +273,15 @@ func (c *Client) StartContext(ctx context.Context) error {
 		}
 	}
 	return lastErr
+}
+
+// BaseGeneration returns the generation future handshakes should start
+// from: the configured generation, advanced by any server-pushed rotation.
+func (c *Client) BaseGeneration() uint64 {
+	if pushed := c.genBase.Load(); pushed > c.cfg.Generation {
+		return pushed
+	}
+	return c.cfg.Generation
 }
 
 // startSession performs one full dial across the port-hop sequence: socket,
@@ -387,14 +422,15 @@ func dialSession(cfg Config, generation uint64, handshakeTimeout time.Duration) 
 }
 
 // configureTunnel applies the shared traffic-shaping settings for both UDP
-// and TCP sessions.
+// and TCP sessions. Order matters: the TxMask replaces the packet conn and
+// must be installed before SetKeepalive starts its send pump.
 func configureTunnel(t *tunnel.PacketTunnel, cfg Config, shapeBuckets []int) {
 	if !cfg.DisableShape && len(shapeBuckets) > 0 {
 		t.SetShapeBuckets(shapeBuckets)
 	}
 	t.SetJitter(cfg.JitterMax)
-	t.SetKeepalive(cfg.KeepaliveInterval)
 	t.SetTxMask(tunnel.NewNoiseTxMask(cfg.DecoyEvery, cfg.DecoyMaxPerSec, shapeBuckets))
+	t.SetKeepalive(cfg.KeepaliveInterval)
 }
 
 // SendPacket forwards one raw IP packet into the tunnel.
@@ -527,9 +563,21 @@ type Server struct {
 	tcpSessions map[*tunnel.PacketTunnel]struct{}
 	tcpDecoys   atomic.Int64
 	tcpPending  atomic.Int64
-	cancel      context.CancelFunc
-	done        chan struct{}
-	pool        *addressPool
+
+	// Immune system state (see immune.go).
+	baseGen     uint64
+	rotating    bool
+	probeMode   atomic.Value // tunnel.StreamProbeMode
+	currentCPS  atomic.Pointer[[]*compiler.CompiledProtocol]
+	threat      atomic.Int32
+	teleProbes  atomic.Uint64
+	teleReplays atomic.Uint64
+	teleHands   atomic.Uint64
+	teleDecoys  atomic.Uint64
+
+	cancel context.CancelFunc
+	done   chan struct{}
+	pool   *addressPool
 }
 
 // NewServer prepares a server; Start binds and begins accepting clients.
@@ -538,7 +586,10 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg}
+	s := &Server{cfg: cfg, baseGen: cfg.Generation}
+	s.probeMode.Store(cfg.StreamDecoyMode)
+	initialCPS := []*compiler.CompiledProtocol(nil)
+	s.currentCPS.Store(&initialCPS)
 	if cfg.ClientCIDR != "" {
 		pool, err := newAddressPool(cfg.ClientCIDR)
 		if err != nil {
@@ -597,24 +648,32 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	s.currentCPS.Store(&cps)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
+	var err2 error
 	if s.cfg.Transport == "tcp" {
-		return s.startTCPListeners(ctx, addrs, cps, psk)
+		err2 = s.startTCPListeners(ctx, addrs, cps, psk)
+	} else if s.cfg.Transport == "websocket" || s.cfg.Transport == "wss" {
+		err2 = s.startWebSocketListeners(ctx, addrs, cps, psk)
+	} else if s.cfg.Transport == "http" || s.cfg.Transport == "https" {
+		err2 = s.startHTTPListeners(ctx, addrs, cps, psk)
+	} else {
+		err2 = s.startUDPMuxes(ctx, addrs, cps, psk)
 	}
-	if s.cfg.Transport == "websocket" || s.cfg.Transport == "wss" {
-		return s.startWebSocketListeners(ctx, addrs, cps, psk)
+	if err2 != nil {
+		return err2
 	}
-	if s.cfg.Transport == "http" || s.cfg.Transport == "https" {
-		return s.startHTTPListeners(ctx, addrs, cps, psk)
-	}
-	return s.startUDPMuxes(ctx, addrs, cps, psk)
+	// Listeners are live: observation and defense loops can start.
+	s.startImmuneLoops(ctx)
+	return nil
 }
 
 func (s *Server) newMux(conn net.PacketConn, cps []*compiler.CompiledProtocol, psk []byte) *tunnel.ServerMux {
 	mux := tunnel.NewServerMux(conn, cps[0], psk)
 	mux.WithProtocols(cps).
+		WithTelemetry(s.onTelemetry).
 		WithKeepalive(s.cfg.KeepaliveInterval).
 		WithIdleTimeout(s.cfg.IdleTimeout).
 		WithRateLimit(s.cfg.RateLimitBytesPerSec).
@@ -806,6 +865,9 @@ func (s *Server) runTCPAccept(ctx context.Context, ln net.Listener, cps []*compi
 }
 
 func (s *Server) handleStreamConn(ctx context.Context, conn net.Conn, cps []*compiler.CompiledProtocol, psk []byte) {
+	// Rotation-aware: always read the live protocol window so a generation
+	// swap takes effect on the next connection without restarting listeners.
+	cps = s.currentProtocols()
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 		_ = tc.SetKeepAlive(true)
@@ -813,6 +875,7 @@ func (s *Server) handleStreamConn(ctx context.Context, conn net.Conn, cps []*com
 	}
 	t, generation, err := tunnel.ServerHandshakeStream(conn, cps, psk, s.cfg.JitterMax)
 	if err != nil {
+		s.teleProbes.Add(1)
 		var probe *tunnel.StreamProbeError
 		if errors.As(err, &probe) {
 			s.handleStreamProbe(conn, probe.First)
@@ -821,6 +884,7 @@ func (s *Server) handleStreamConn(ctx context.Context, conn net.Conn, cps []*com
 		}
 		return
 	}
+	s.teleHands.Add(1)
 	buckets := compiler.DefaultShapeBuckets
 	if !s.cfg.DisableShape {
 		if int(generation) < len(cps) {
@@ -829,8 +893,8 @@ func (s *Server) handleStreamConn(ctx context.Context, conn net.Conn, cps []*com
 		t.SetShapeBuckets(buckets)
 	}
 	t.SetJitter(s.cfg.JitterMax)
-	t.SetKeepalive(s.cfg.KeepaliveInterval)
 	t.SetTxMask(tunnel.NewNoiseTxMask(s.cfg.DecoyEvery, s.cfg.DecoyMaxPerSec, buckets))
+	t.SetKeepalive(s.cfg.KeepaliveInterval)
 
 	s.mu.Lock()
 	if s.tcpSessions == nil {

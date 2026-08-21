@@ -28,17 +28,39 @@ type httpSession struct {
 type httpDownStream struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
+	rc      *http.ResponseController
 	mu      sync.Mutex
+	closed  bool
 }
 
+// Write serializes session writes and becomes a no-op once the download
+// handler has finished: net/http forbids ResponseWriter use after the
+// handler returns, and the session pump may race the handler's exit.
 func (d *httpDownStream) Write(p []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	n, err := d.w.Write(p)
+	if d.closed {
+		return 0, io.ErrClosedPipe
+	}
+	n, err := func() (int, error) {
+		// Bound any single write so finish() cannot block forever on a
+		// vanished client.
+		_ = d.rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		return d.w.Write(p)
+	}()
 	if err == nil && d.flusher != nil {
 		d.flusher.Flush()
 	}
 	return n, err
+}
+
+// finish marks the stream done and waits for any in-flight Write to leave
+// net/http internals. Call exactly once before the download handler
+// returns. Bounded by the write deadline set in Write.
+func (d *httpDownStream) finish() {
+	d.mu.Lock()
+	d.closed = true
+	d.mu.Unlock()
 }
 
 func (s *Server) startHTTPListeners(ctx context.Context, addrs []string, cps []*compiler.CompiledProtocol, psk []byte) error {
@@ -139,8 +161,9 @@ func (s *Server) dropHTTPSession(sid string) {
 func (s *Server) maybeStartHTTPSession(sid string, p *httpSession, ctx context.Context, cps []*compiler.CompiledProtocol, psk []byte) bool {
 	p.mu.Lock()
 	if p.started || p.up == nil || p.down == nil {
+		started := p.started // read before Unlock: another goroutine may write it
 		p.mu.Unlock()
-		return p.started
+		return started
 	}
 	p.started = true
 	up := p.up
@@ -153,9 +176,11 @@ func (s *Server) maybeStartHTTPSession(sid string, p *httpSession, ctx context.C
 	go func() {
 		s.handleStreamConn(ctx, conn, cps, psk)
 		<-conn.Done()
-		// Release the upload/download handler goroutines: they park on
-		// p.done once the legs are paired and nothing else closes it.
-		close(p.done)
+		// Do NOT close(p.done) here: the upload/download handlers exit via
+		// r.Context().Done() once the client's HTTP legs die, which happens
+		// when this session ends. Closing early would let the handlers
+		// return while the session's write pump may still be inside
+		// down.Write, racing net/http's response finalization.
 		s.dropHTTPSession(sid)
 	}()
 	return true
@@ -206,7 +231,7 @@ func (s *Server) handleHTTPDownload(w http.ResponseWriter, r *http.Request, sid 
 	if flusher != nil {
 		flusher.Flush()
 	}
-	down := &httpDownStream{w: w, flusher: flusher}
+	down := &httpDownStream{w: w, flusher: flusher, rc: http.NewResponseController(w)}
 	p := s.sessionForHTTP(sid)
 	p.mu.Lock()
 	if p.down != nil {
@@ -221,6 +246,7 @@ func (s *Server) handleHTTPDownload(w http.ResponseWriter, r *http.Request, sid 
 		case <-p.done:
 		case <-r.Context().Done():
 		}
+		down.finish()
 		return
 	}
 	select {
@@ -228,6 +254,7 @@ func (s *Server) handleHTTPDownload(w http.ResponseWriter, r *http.Request, sid 
 	case <-time.After(httpPairTimeout):
 		s.dropHTTPSession(sid)
 	}
+	down.finish()
 }
 
 type httpNamedAddr struct{ value string }

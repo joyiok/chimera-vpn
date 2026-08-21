@@ -21,6 +21,7 @@
   },
   "transport": "udp",
   "stream_decoy_mode": "silent",
+  "generation_rotation_sec": 0,
   "stream_decoy_timeout_sec": 5,
   "stream_decoy_max_pending": 256,
   "decoy_every": 48,

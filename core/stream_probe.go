@@ -28,7 +28,8 @@ func (s *Server) handleStreamProbe(conn net.Conn, first []byte) {
 	s.tcpDecoys.Add(1)
 	defer s.tcpDecoys.Add(-1)
 
-	switch cfg.StreamDecoyMode {
+	// The immune system may have escalated the configured mode.
+	switch s.ProbeMode() {
 	case tunnel.StreamProbeClose:
 		_ = conn.Close()
 		return

@@ -41,6 +41,10 @@ const (
 	// ControlKeepalive is a 1-byte no-op payload sent periodically on idle
 	// sessions so NAT mappings and firewalls keep the 5-tuple alive.
 	ControlKeepalive = 0x04
+	// ControlGeneration pushes a new base protocol generation (8-byte
+	// big-endian payload follows the type byte). The server sends it when
+	// generation rotation advances; clients adopt it for future handshakes.
+	ControlGeneration = 0x05
 
 	// DefaultKeepaliveInterval refreshes NAT mappings well inside the
 	// 30s typical UDP timeout; 0 disables keepalives.
@@ -142,6 +146,12 @@ type PacketTunnel struct {
 
 	// jitterMax smears send timing; 0 disables (see applyJitter).
 	jitterMax time.Duration
+
+	// remoteGen is the base protocol generation the peer pushed via
+	// ControlGeneration (0 = none received yet).
+	remoteGen atomic.Uint64
+	genMu     sync.Mutex
+	onGen     func(uint64)
 
 	bytesSent atomic.Uint64
 	bytesRecv atomic.Uint64
@@ -275,6 +285,24 @@ func (t *PacketTunnel) SendControl(payload []byte) error {
 	return t.sendPayload(append([]byte{ControlAssignIP}, payload...))
 }
 
+// PushControl sends an already-framed control payload (type byte + body),
+// e.g. a ControlGeneration push. Best effort like all control traffic.
+func (t *PacketTunnel) PushControl(payload []byte) error {
+	return t.sendControlRaw(payload)
+}
+
+// SetOnGeneration registers a callback fired when the peer pushes a new
+// base generation via ControlGeneration. Safe to call anytime.
+func (t *PacketTunnel) SetOnGeneration(fn func(uint64)) {
+	t.genMu.Lock()
+	t.onGen = fn
+	t.genMu.Unlock()
+}
+
+// RemoteGeneration returns the last generation pushed by the peer
+// (0 = none received).
+func (t *PacketTunnel) RemoteGeneration() uint64 { return t.remoteGen.Load() }
+
 func (t *PacketTunnel) sendPayload(payload []byte) error {
 	t.sessMu.Lock()
 	frame, err := t.sess.Encode(payload)
@@ -358,6 +386,19 @@ func (t *PacketTunnel) handleLossControl(pkt []byte) bool {
 		return true
 	case ControlKeepalive:
 		return true // NAT probe: refresh only
+	case ControlGeneration:
+		if len(pkt) != 9 {
+			return true // malformed control: swallow
+		}
+		gen := binary.BigEndian.Uint64(pkt[1:9])
+		t.remoteGen.Store(gen)
+		t.genMu.Lock()
+		cb := t.onGen
+		t.genMu.Unlock()
+		if cb != nil {
+			cb(gen)
+		}
+		return true
 	default:
 		return false
 	}
