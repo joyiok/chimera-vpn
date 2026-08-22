@@ -29,7 +29,8 @@ class VpnStateTest {
         // into "connect" while the tunnel is still negotiating; unknown
         // strings must read as in-progress instead.
         assertEquals(ConnState.CONNECTING, VpnState.classify("握手进行中"))
-        assertEquals(ConnState.CONNECTING, VpnState.classify(""))
+        // An EMPTY status is the initial StateFlow value and means idle.
+        assertEquals(ConnState.DISCONNECTED, VpnState.classify(""))
     }
 
     @Test

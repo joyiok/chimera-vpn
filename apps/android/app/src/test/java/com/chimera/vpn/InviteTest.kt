@@ -18,8 +18,10 @@ class InviteTest {
         val inv = Invite(addr = "vpn.example.com:4789", seedHex = seed, pskHex = psk, generation = 7, name = "home")
         val text = Invites.format(inv)
         org.junit.Assert.assertTrue(text.startsWith("chimera://v1/"))
+        // format() normalizes hex to lowercase; the parsed result must
+        // match the canonical form.
         val back = Invites.parse(text)
-        assertEquals(inv, back)
+        assertEquals(inv.copy(pskHex = psk.lowercase()), back)
     }
 
     @Test
@@ -59,14 +61,16 @@ class InviteTest {
     }
 
     @Test
-    fun `rejects garbage`() {
+    fun `rejects garbage at parse level`() {
+        // These go through parse() directly so the rejection happens where
+        // a real invite would fail, not inside format().
         assertThrows(IllegalArgumentException::class.java) { Invites.parse("") }
         assertThrows(IllegalArgumentException::class.java) { Invites.parse("https://example.com/x") }
         assertThrows(IllegalArgumentException::class.java) {
-            Invites.parse(Invites.format(Invite("h:1", "zz", psk, 0)))
+            Invites.parse("""{"v":1,"a":"h:1","s":"zz","p":"$psk"}""")
         }
         assertThrows(IllegalArgumentException::class.java) {
-            Invites.parse(Invites.format(Invite("", seed, psk, 0)))
+            Invites.parse("""{"v":1,"s":"$seed","p":"$psk"}""")
         }
     }
 }
