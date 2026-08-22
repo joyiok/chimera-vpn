@@ -57,6 +57,13 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 			log.Printf("default-route takeover failed (tunnel still up): %v", err)
 		} else {
 			log.Printf("default route taken over via %s (server /32 exception for %s)", dev.Name(), cfg.ServerAddr)
+			if opt.cnDirect {
+				if n, err := routes.installCNDirectRoutes(cfg.ServerAddr); err != nil {
+					log.Printf("CN direct routes failed (full tunnel kept): %v", err)
+				} else {
+					log.Printf("CN direct: %d mainland routes pinned to underlay (domestic stays direct)", n)
+				}
+			}
 			dns := pushTUNDNS(dev.Name(), cfg.DNSServers)
 			defer func() {
 				dns.revert()

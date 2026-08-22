@@ -3,15 +3,36 @@
 package bridge
 
 import (
+	"bufio"
+	"embed"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+//go:embed chnroute_v4.txt
+var chnrouteV4 string
+
+// chnroutePrefixes parses the embedded APNIC-derived mainland-China CIDR
+// list, skipping comments and blank lines.
+func chnroutePrefixes() []string {
+	var out []string
+	for _, line := range strings.Split(chnrouteV4, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
 
 const (
 	gaaFlags = windows.GAA_FLAG_SKIP_ANYCAST |
@@ -173,6 +194,25 @@ func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate
 			installed++
 		}
 		log.Printf("[route] split mode: %d private/local bypass routes -> %s", len(privateBypassRoutes), phys.name)
+
+		// Geo split: mainland-China prefixes stay on the physical adapter
+		// so domestic destinations bypass the tunnel (国内直连). One netsh
+		// batch script instead of thousands of process spawns.
+		start := time.Now()
+		geoSpecs := make([]routeSpec, 0, 6000)
+		for _, p := range chnroutePrefixes() {
+			geoSpecs = append(geoSpecs, routeSpec{prefix: p, ifIndex: phys.index, ifName: phys.name, nexthop: phys.gateway})
+		}
+		if err := runNetshBatch(geoSpecs); err != nil {
+			// Non-fatal: worst case the geo split is incomplete; rollback
+			// of already-installed private routes would break connectivity
+			// more than a partial geo list helps.
+			log.Printf("[route] geo bypass batch failed (split continues without it): %v", err)
+		} else {
+			t.specs = append(t.specs, geoSpecs...)
+			installed += len(geoSpecs)
+			log.Printf("[route] geo split: %d mainland routes -> %s (%s)", len(geoSpecs), phys.name, time.Since(start).Round(time.Millisecond))
+		}
 	}
 
 	// Then the two half-default routes through the TUN.
@@ -219,6 +259,42 @@ func isRouteExistsErr(err error) bool {
 }
 
 func addRoute(s routeSpec) error { return runNetsh("add", s) }
+
+// runNetshBatch executes one netsh script with an "add route" line per
+// spec. netsh -f processes them in-process, which is dramatically faster
+// than one process per route at chnroute scale (~5500 prefixes).
+func runNetshBatch(specs []routeSpec) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	tmp, err := os.CreateTemp("", "chimera-routes-*.netsh")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	w := bufio.NewWriter(tmp)
+	for _, s := range specs {
+		line := fmt.Sprintf("interface ipv4 add route prefix=%s interface=%d", s.prefix, s.ifIndex)
+		if s.nexthop != "" {
+			line += " nexthop=" + s.nexthop
+		}
+		line += " store=active"
+		fmt.Fprintln(w, line)
+	}
+	if err := w.Flush(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	cmd := exec.Command("netsh", "-f", tmp.Name())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("netsh -f (%d routes): %v: %s", len(specs), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 func deleteRoute(s routeSpec) error { return runNetsh("delete", s) }
 

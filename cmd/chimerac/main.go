@@ -21,6 +21,7 @@ func main() {
 	server := flag.String("server", "", "override config serverAddr (host:port)")
 	transport := flag.String("transport", "", "override config transport (udp or tcp)")
 	takeRoute := flag.Bool("take-route", false, "install 0.0.0.0/1 + 128.0.0.0/1 via TUN (requires root)")
+	cnDirect := flag.Bool("cn-direct", false, "with -take-route: pin mainland-China routes to the underlay (domestic stays direct; requires configs embedded chnroute list)")
 	timeout := flag.Duration("timeout", 12*time.Second, "handshake / probe deadline")
 	tunName := flag.String("tun", "", "override TUN interface name (default chimerac0)")
 	lostAfter := flag.Duration("lost-after", defaultLinkLostAfter, "reconnect after this much inbound silence; 0 disables idle reconnect")
@@ -72,7 +73,7 @@ func main() {
 		return
 	}
 
-	if err := runVPN(cfg, vpnOptions{takeRoute: *takeRoute, lostAfter: *lostAfter, statsEvery: *statsEvery}); err != nil {
+	if err := runVPN(cfg, vpnOptions{takeRoute: *takeRoute, cnDirect: *cnDirect || cfg.CNDirect, lostAfter: *lostAfter, statsEvery: *statsEvery}); err != nil {
 		fatal(err)
 	}
 }

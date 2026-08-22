@@ -23,6 +23,9 @@ type clientConfig struct {
 	TunName          string `json:"tunName"`
 	MTU              int    `json:"mtu"`
 	TakeDefaultRoute bool   `json:"takeDefaultRoute"`
+	// CNDirect pins mainland-China routes to the physical underlay
+	// after default-route takeover: domestic sites stay direct.
+	CNDirect bool `json:"cnDirect"`
 	// ShapeBuckets overrides the genome-selected packet-length ladder.
 	// Derive one from a real-traffic capture with:
 	// chimera-eval -pcap real.pcap -ladder

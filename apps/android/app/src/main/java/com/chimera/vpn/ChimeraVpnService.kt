@@ -261,11 +261,12 @@ class ChimeraVpnService : VpnService() {
             .addDnsServer("8.8.8.8")
 
         if (splitTunnel) {
-            // 分流：仅把公网 IPv4 送进 VPN，私网/环回/链路本地/组播直连。
-            // 路由表在 res/values/split_routes.xml，与 Windows 的绕过列表一致。
-            val routes = resources.getStringArray(R.array.split_tunnel_ipv4_routes)
+            // 地理分流：国内直连（低延迟）、境外公网走隧道。
+            // 白名单 = 非大陆公网空间（CN ∪ 私网/保留段的补集），
+            // 由 scripts/update-chnroute.py 从 APNIC 数据生成。
+            val geoRoutes = resources.getStringArray(R.array.split_tunnel_geo_routes)
             var added = 0
-            for (route in routes) {
+            for (route in geoRoutes) {
                 runCatching {
                     // 数组元素是 "a.b.c.d/p" 形式；部分系统版本不接受带
                     // 斜杠的 address，这里显式拆成 address + prefix。
@@ -280,7 +281,7 @@ class ChimeraVpnService : VpnService() {
                 builder.addRoute("0.0.0.0", 0)
                 postLog("分流路由全部被拒绝，已退回全局模式")
             } else {
-                postLog("分流模式已安装 ${added} 条公网路由，局域网/私网直连")
+                postLog("地理分流已安装 ${added} 条境外路由：国内直连，境外走隧道")
             }
         } else {
             builder.addRoute("0.0.0.0", 0)

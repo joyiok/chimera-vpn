@@ -3,13 +3,32 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 
 	"chimera/internal/netpkt"
 )
+
+//go:embed chnroute_v4.txt
+var chnrouteV4 string
+
+// chnrouteCIDRs parses the embedded APNIC-derived mainland-China CIDR
+// list, skipping comments and blank lines.
+func chnrouteCIDRs() []string {
+	var out []string
+	for _, line := range strings.Split(chnrouteV4, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
 
 type routeSpec struct {
 	args []string // ip route add/del arguments after "route add|del"
@@ -119,4 +138,80 @@ func parseRouteGetFields(fields []string) (dev, via string) {
 		}
 	}
 	return dev, via
+}
+
+// buildIPBatchLines renders one "route replace …" line per spec for
+// ip -batch. Exposed for tests.
+func buildIPBatchLines(ipv6 bool, specs [][]string) []string {
+	fam := "-4"
+	if ipv6 {
+		fam = "-6"
+	}
+	lines := make([]string, 0, len(specs))
+	for _, args := range specs {
+		lines = append(lines, fam+" route replace "+strings.Join(args, " "))
+	}
+	return lines
+}
+
+// addBatch installs many routes with a single `ip -batch` invocation
+// (thousands of individual execs would take minutes). The batch stops on
+// the first error; callers roll back via release().
+func (r *linuxRoutes) addBatch(ipv6 bool, specs [][]string) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	tmp, err := os.CreateTemp("", "chimera-routes-*.txt")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	for _, line := range buildIPBatchLines(ipv6, specs) {
+		if _, err := tmp.WriteString(line + "\n"); err != nil {
+			tmp.Close()
+			return err
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	bin := []string{"-batch", "-force", tmp.Name()}
+	if ipv6 {
+		bin = append([]string{"-6"}, bin...)
+	}
+	cmd := exec.Command("ip", bin...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ip -batch (%d routes): %v: %s", len(specs), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// installCNDirectRoutes pins mainland-China destinations to the physical
+// underlay so domestic traffic bypasses the tunnel even after the
+// half-default takeover. Returns the number of routes installed.
+func (r *linuxRoutes) installCNDirectRoutes(serverAddr string) (int, error) {
+	host := netpkt.HostFromAddr(serverAddr)
+	serverIP, err := netpkt.ResolveIPv4(host)
+	if err != nil {
+		return 0, err
+	}
+	dev, via, err := lookupUnderlay(serverIP)
+	if err != nil {
+		return 0, err
+	}
+	cidrs := chnrouteCIDRs()
+	specs := make([][]string, 0, len(cidrs))
+	for _, c := range cidrs {
+		args := []string{c}
+		if via != "" {
+			args = append(args, "via", via)
+		}
+		args = append(args, "dev", dev)
+		specs = append(specs, args)
+		r.specs = append(r.specs, routeSpec{args: append([]string(nil), args...)})
+	}
+	if err := r.addBatch(false, specs); err != nil {
+		return 0, err
+	}
+	return len(specs), nil
 }
