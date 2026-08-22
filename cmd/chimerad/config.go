@@ -46,6 +46,11 @@ type serverConfig struct {
 	// Derive one from a real-traffic capture with:
 	// chimera-eval -pcap real.pcap -ladder
 	ShapeBuckets []int `json:"shape_buckets"`
+	// ProbeMark embeds a visible deployment tag in handshake covers,
+	// making THIS server identifiable on the wire. Opt-in measurement /
+	// politeness feature — never enable it on a server whose users need
+	// undetectability. Empty (default) = random covers.
+	ProbeMark string `json:"probe_mark"`
 	// Transports starts every listed underlay at once (udp, tcp,
 	// websocket, wss, http, https); clients may arrive over any of them.
 	// Empty = [transport].
@@ -184,6 +189,7 @@ func toCoreConfig(cfg serverConfig) (core.Config, error) {
 		PortHopSpread:         cfg.PortHopSpread,
 		GenerationRotation:    time.Duration(cfg.GenerationRotationSec) * time.Second,
 		ShapeBuckets:          cfg.ShapeBuckets,
+		ProbeMark:             cfg.ProbeMark,
 		Transports:            cfg.Transports,
 		TLSCertFile:           cfg.TLSCertFile,
 		TLSKeyFile:            cfg.TLSKeyFile,

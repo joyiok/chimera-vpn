@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"chimera/internal/genome"
 )
@@ -42,9 +43,20 @@ func CoverLen(g *genome.ProtocolGenome) int {
 // WrapHandshakeDatagram prepends a fresh random printable ASCII cover of
 // CoverLen(g) bytes. Retransmissions wrap again so the on-wire prefix is not
 // a static per-server magic. The inner frame (AEAD transcript) is unchanged.
+//
+// If a probe mark has been installed (SetProbeMark), the first
+// len(mark) bytes of the cover carry the literal mark instead of random
+// text. This makes THAT deployment identifiable on the wire by any observer
+// who knows the mark — a deliberate, opt-in measurement/politeness feature;
+// see SetProbeMark. The frame, its authentication, and the species' cover
+// length are untouched, and default deployments (no mark) emit fully random
+// covers exactly as before.
 func WrapHandshakeDatagram(g *genome.ProtocolGenome, frame []byte) []byte {
 	n := CoverLen(g)
 	cover := randomPrintable(n, rand.Reader)
+	if mark := probeMarkString(); len(mark) > 0 && n >= len(mark) {
+		copy(cover, mark)
+	}
 	out := make([]byte, 0, n+len(frame)+64)
 	out = append(out, cover...)
 	out = append(out, frame...)
@@ -138,4 +150,62 @@ func randomPrintable(n int, rnd io.Reader) []byte {
 		buf[i] = 0x61 + byte(i%26) // 'a'.. repeating
 	}
 	return buf
+}
+
+// probeMark is an optional deployment-identifying tag embedded at the head
+// of every handshake cover. See SetProbeMark for the contract and the
+// safety notes.
+var probeMark atomic.Value // string
+
+// ProbeMarkMaxLen bounds the tag well below CoverLenMin so a mark can
+// never spill out of the printable prefix into the authenticated frame.
+const ProbeMarkMaxLen = 16
+
+// ValidateProbeMark checks charset/length without touching process state
+// (NormalizeConfig must stay side-effect free).
+func ValidateProbeMark(mark string) error {
+	for i := 0; i < len(mark); i++ {
+		if mark[i] < 0x21 || mark[i] > 0x7e {
+			return errors.New("must be visible printable ASCII")
+		}
+	}
+	if len(mark) > ProbeMarkMaxLen {
+		return fmt.Errorf("%d chars exceeds max %d", len(mark), ProbeMarkMaxLen)
+	}
+	return nil
+}
+
+// SetProbeMark installs a deployment-identifying tag that is written over
+// the head of every handshake datagram's printable cover.
+//
+// This is a deliberate detectability feature with narrow, opt-in uses:
+//   - measurement research: deploy tagged servers, observe which tags the
+//     censor acts on, and map what it detects;
+//   - politeness: a jurisdiction or operator may prefer a blockable variant
+//     so censors can target the tool without collateral over-blocking of
+//     legitimate traffic.
+//
+// Safety invariants (do not weaken):
+//   - OFF by default: an empty mark changes nothing — default deployments
+//     emit fully random covers exactly as before;
+//   - per-deployment only: the mark identifies processes configured with
+//     it, never the protocol family — frame structure, cover length, and
+//     authentication are untouched, so other deployments are unaffected;
+//   - the mark must be visible printable ASCII (0x21..0x7e) so FEP Ex2/Ex4
+//     exemption still holds; anything else is rejected.
+//
+// Never enable a mark on a server whose users need undetectability.
+func SetProbeMark(mark string) error {
+	if err := ValidateProbeMark(mark); err != nil {
+		return err
+	}
+	probeMark.Store(mark)
+	return nil
+}
+
+func probeMarkString() string {
+	if s, ok := probeMark.Load().(string); ok {
+		return s
+	}
+	return ""
 }

@@ -114,6 +114,12 @@ type Config struct {
 	// fingerprint. Derive a ladder that matches a chosen cover application
 	// with: chimera-eval -pcap real-traffic.pcap -ladder
 	ShapeBuckets []int
+	// ProbeMark embeds a visible deployment-identifying tag at the head of
+	// every handshake cover, making THIS deployment (only) identifiable on
+	// the wire. Opt-in measurement/politeness feature — never enable it on
+	// a server whose users need undetectability. Empty (default) = fully
+	// random covers. See compiler.SetProbeMark.
+	ProbeMark string
 	// JitterMax smears send timing with a truncated exponential in
 	// (0, JitterMax]. 0 disables jitter. Production servers should use
 	// tunnel.DefaultJitterMax.
@@ -235,6 +241,9 @@ func NormalizeConfig(cfg Config) (Config, error) {
 		}
 		cfg.ShapeBuckets = sorted
 	}
+	if err := compiler.ValidateProbeMark(cfg.ProbeMark); err != nil {
+		return cfg, fmt.Errorf("probe_mark: %w", err)
+	}
 	if cfg.Cipher != "" && !genome.KnownCipher(cfg.Cipher) {
 		return cfg, fmt.Errorf("unknown cipher %q", cfg.Cipher)
 	}
@@ -285,6 +294,11 @@ type Client struct {
 func NewClient(cfg Config) (*Client, error) {
 	cfg, err := NormalizeConfig(cfg)
 	if err != nil {
+		return nil, err
+	}
+	// Per-deployment probe mark (opt-in): apply after validation so this
+	// client's handshake covers carry its deployment's tag.
+	if err := compiler.SetProbeMark(cfg.ProbeMark); err != nil {
 		return nil, err
 	}
 	return &Client{cfg: cfg}, nil
@@ -704,6 +718,9 @@ func NewServer(cfg Config) (*Server, error) {
 	s.probeMode.Store(cfg.StreamDecoyMode)
 	initialCPS := []*compiler.CompiledProtocol(nil)
 	s.currentCPS.Store(&initialCPS)
+	if err := compiler.SetProbeMark(cfg.ProbeMark); err != nil {
+		return nil, err
+	}
 	if cfg.ClientCIDR != "" {
 		pool, err := newAddressPool(cfg.ClientCIDR)
 		if err != nil {

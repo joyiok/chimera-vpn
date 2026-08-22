@@ -27,6 +27,10 @@ type clientConfig struct {
 	// Derive one from a real-traffic capture with:
 	// chimera-eval -pcap real.pcap -ladder
 	ShapeBuckets []int `json:"shape_buckets"`
+	// ProbeMark embeds a visible deployment tag in handshake covers.
+	// Opt-in measurement/politeness feature; must match the server's mark
+	// for a tagged deployment. Empty (default) = random covers.
+	ProbeMark string `json:"probe_mark"`
 	// Transports are probed in order until one handshakes (udp, tcp,
 	// websocket, wss). Empty = [transport].
 	Transports []string `json:"transports"`
