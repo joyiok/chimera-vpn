@@ -508,7 +508,7 @@ class ChimeraVpnService : VpnService() {
             postStatus(getString(R.string.status_disconnected))
         } else {
             val current = status.value
-            if (current.contains("连接中") || current.contains("重连中")) {
+            if (VpnState.classify(current) == ConnState.CONNECTING) {
                 postStatus(getString(R.string.status_disconnected))
             }
         }

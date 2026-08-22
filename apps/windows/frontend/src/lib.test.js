@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { escapeHtml, formatBytes, validateHop, validateTransport } from './lib.js'
+import { escapeHtml, formatBytes, validateHop, validateTransport, normalizeStatus, statusLabel, connectLabelFor, looksLikeApp } from './lib.js'
 
 test('escapeHtml neutralizes markup', () => {
   assert.equal(escapeHtml('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;')
@@ -48,4 +48,32 @@ test('validateHop rejects out-of-range counts', () => {
     assert.equal(r.ok, false, `hopCount ${bad} should be rejected`)
     assert.match(r.error, /1-16/)
   }
+})
+
+// normalizeStatus must never let an unknown payload render as connected.
+test('normalizeStatus maps the four UI states and quarantines unknowns', () => {
+  assert.equal(normalizeStatus('connected'), 'connected')
+  assert.equal(normalizeStatus('connecting'), 'connecting')
+  assert.equal(normalizeStatus('disconnected'), 'disconnected')
+  assert.equal(normalizeStatus('error'), 'error')
+  assert.equal(normalizeStatus('error: dial refused'), 'error')
+  assert.equal(normalizeStatus(''), 'error')
+  assert.equal(normalizeStatus(null), 'error')
+  assert.equal(normalizeStatus('connected-ish'), 'error')
+})
+
+test('statusLabel and connectLabelFor match the badge copy', () => {
+  assert.equal(statusLabel('connected'), '已连接')
+  assert.equal(statusLabel('disconnected'), '未连接')
+  assert.equal(connectLabelFor('connected'), '断开')
+  assert.equal(connectLabelFor('connecting'), '连接中…')
+  assert.equal(connectLabelFor('error'), '重试')
+  assert.equal(connectLabelFor('disconnected'), '连接')
+})
+
+test('looksLikeApp detects the Wails backend shape', () => {
+  assert.equal(looksLikeApp({ Start: () => {}, Status: () => 'x' }), true)
+  assert.equal(looksLikeApp({ Start: () => {} }), false)
+  assert.equal(looksLikeApp(null), false)
+  assert.equal(looksLikeApp('ChimeraApp'), false)
 })

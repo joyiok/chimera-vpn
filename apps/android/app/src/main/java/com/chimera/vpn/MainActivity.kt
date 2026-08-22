@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity() {
             val status = ChimeraVpnService.status.value
             val shouldStop = ChimeraVpnService.isRunning ||
                 status == getString(R.string.status_connected) ||
-                status.contains("连接中") || status.contains("重连中")
+                VpnState.classify(status) == ConnState.CONNECTING
             if (shouldStop) {
                 ChimeraVpnService.stop(this)
             } else {
@@ -417,11 +417,12 @@ class MainActivity : AppCompatActivity() {
     private fun renderStatus(status: String) {
         statusText.text = status
 
-        val connected = status == getString(R.string.status_connected)
-        val connecting = status == getString(R.string.status_connecting) ||
-            status == getString(R.string.connecting) ||
-            status.contains("连接中") || status.contains("重连中")
-        val failed = status.startsWith("连接失败") || status.startsWith("重连失败") || status.contains("不完整")
+        // Centralized classification (VpnState): one set of keyword rules
+        // shared by the service, this activity, and the unit tests.
+        val state = VpnState.classify(status)
+        val connected = state == ConnState.CONNECTED
+        val connecting = state == ConnState.CONNECTING
+        val failed = state == ConnState.FAILED
 
         val chipColor: Int
         val dotColor: Int

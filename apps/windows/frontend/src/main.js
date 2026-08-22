@@ -1,13 +1,9 @@
 import './style.css'
-import { escapeHtml, formatBytes, validateHop, validateTransport } from './lib.js'
+import { escapeHtml, formatBytes, validateHop, validateTransport, normalizeStatus, statusLabel, connectLabelFor, looksLikeApp } from './lib.js'
 
 const SPARK_ACCENT = '#DC7A44'
 const SPARK_OK = '#7FC581'
 const SPARK_GRID = 'rgba(183, 168, 155, 0.16)'
-
-function looksLikeApp(obj) {
-  return !!obj && typeof obj.Start === 'function' && typeof obj.Status === 'function'
-}
 
 // Wails v2 binds `type ChimeraApp struct` in package main as
 // window.go.main.ChimeraApp, not window.go.main.App. v0.1.0 only
@@ -82,13 +78,6 @@ const els = {
   spark: $('spark'),
 }
 
-const STATUS_TEXT = {
-  disconnected: '未连接',
-  connecting: '连接中',
-  connected: '已连接',
-  error: '错误',
-}
-
 const samples = []
 let lastSent = 0
 let lastRecv = 0
@@ -117,25 +106,16 @@ function clearLogs() {
 }
 
 function renderStatus(status, detail = '') {
-  const normalized = ['disconnected', 'connecting', 'connected', 'error'].includes(status)
-    ? status
-    : 'error'
-  currentStatus = status.trim() || 'disconnected'
+  const normalized = normalizeStatus(status)
+  currentStatus = String(status ?? '').trim() || 'disconnected'
 
   els.statusBadge.className = `badge ${normalized}`
   const detailText = detail ? `：${detail}` : ''
-  els.statusBadge.title = `${STATUS_TEXT[normalized] ?? normalized}${detailText}`
-  els.statusText.textContent = (STATUS_TEXT[normalized] ?? normalized) + detailText
+  els.statusBadge.title = `${statusLabel(normalized)}${detailText}`
+  els.statusText.textContent = statusLabel(normalized) + detailText
 
   els.connectBtn.dataset.state = normalized
-  els.connectLabel.textContent =
-    normalized === 'connected'
-      ? '断开'
-      : normalized === 'connecting'
-        ? '连接中…'
-        : normalized === 'error'
-          ? '重试'
-          : '连接'
+  els.connectLabel.textContent = connectLabelFor(normalized)
   els.connectBtn.disabled = busy || normalized === 'connecting'
 }
 
