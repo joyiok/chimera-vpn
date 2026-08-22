@@ -26,6 +26,10 @@ type clientConfig struct {
 	// CNDirect pins mainland-China routes to the physical underlay
 	// after default-route takeover: domestic sites stay direct.
 	CNDirect bool `json:"cnDirect"`
+	// GeoipDB 是 MaxMind 兼容的 .mmdb 路径（GeoLite2-Country 或社区
+	// Country.mmdb）。设置后 CN 直连路由从库里实时提取（始终最新），
+	// 否则用内置 chnroute 快照。
+	GeoipDB string `json:"geoipDb"`
 	// ShapeBuckets overrides the genome-selected packet-length ladder.
 	// Derive one from a real-traffic capture with:
 	// chimera-eval -pcap real.pcap -ladder

@@ -13,6 +13,14 @@ import (
 	"chimera/internal/invite"
 )
 
+// geoipDbFinal resolves the mmdb path: flag overrides config.
+func geoipDbFinal(cfg clientConfig, flagVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	return cfg.GeoipDB
+}
+
 func main() {
 	configPath := flag.String("config", "client.json", "client JSON config path")
 	inviteURL := flag.String("invite", "", "chimera://v1/… share URL (overrides seed/PSK/server in -config)")
@@ -22,6 +30,7 @@ func main() {
 	transport := flag.String("transport", "", "override config transport (udp or tcp)")
 	takeRoute := flag.Bool("take-route", false, "install 0.0.0.0/1 + 128.0.0.0/1 via TUN (requires root)")
 	cnDirect := flag.Bool("cn-direct", false, "with -take-route: pin mainland-China routes to the underlay (domestic stays direct; requires configs embedded chnroute list)")
+	geoipDb := flag.String("geoip-db", "", "mmdb database for -cn-direct route extraction (GeoLite2-Country / Country.mmdb); overrides the embedded chnroute snapshot")
 	timeout := flag.Duration("timeout", 12*time.Second, "handshake / probe deadline")
 	tunName := flag.String("tun", "", "override TUN interface name (default chimerac0)")
 	lostAfter := flag.Duration("lost-after", defaultLinkLostAfter, "reconnect after this much inbound silence; 0 disables idle reconnect")
@@ -73,7 +82,7 @@ func main() {
 		return
 	}
 
-	if err := runVPN(cfg, vpnOptions{takeRoute: *takeRoute, cnDirect: *cnDirect || cfg.CNDirect, lostAfter: *lostAfter, statsEvery: *statsEvery}); err != nil {
+	if err := runVPN(cfg, vpnOptions{takeRoute: *takeRoute, cnDirect: *cnDirect || cfg.CNDirect, geoipDb: geoipDbFinal(cfg, *geoipDb), lostAfter: *lostAfter, statsEvery: *statsEvery}); err != nil {
 		fatal(err)
 	}
 }

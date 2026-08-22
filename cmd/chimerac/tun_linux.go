@@ -58,10 +58,12 @@ func runVPN(cfg clientConfig, opt vpnOptions) error {
 		} else {
 			log.Printf("default route taken over via %s (server /32 exception for %s)", dev.Name(), cfg.ServerAddr)
 			if opt.cnDirect {
-				if n, err := routes.installCNDirectRoutes(cfg.ServerAddr); err != nil {
+				cidrs, source := cnRouteSource(cfg, opt.geoipDb)
+				n, err := routes.installCIDRDirectRoutes(cidrs, cfg.ServerAddr)
+				if err != nil {
 					log.Printf("CN direct routes failed (full tunnel kept): %v", err)
 				} else {
-					log.Printf("CN direct: %d mainland routes pinned to underlay (domestic stays direct)", n)
+					log.Printf("CN direct: %d mainland routes pinned to underlay via %s (domestic stays direct)", n, source)
 				}
 			}
 			dns := pushTUNDNS(dev.Name(), cfg.DNSServers)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	core "chimera/core"
+	geoip "chimera/geoip"
 
 	bridge "chimera/windows-client/internal/bridge"
 )
@@ -99,7 +100,7 @@ func getAssignedIP(ctx context.Context) (string, error) {
 
 // startPacketBridge 创建 Wintun 虚拟网卡、启动双向包泵，并接管默认路由。
 // 路由接管失败按非致命处理：隧道仍可用（用户手工路由），只记日志。
-func startPacketBridge(ip string, splitTunnel bool) error {
+func startPacketBridge(ip string, cfg appConfig) error {
 	if transportClient == nil {
 		return fmt.Errorf("transport not started")
 	}
@@ -111,11 +112,34 @@ func startPacketBridge(ip string, splitTunnel bool) error {
 	packetBridge = b
 	log.Printf("[coreBridge] Wintun packet bridge started with %s/24", ip)
 
+	// Geo split: 大陆直连。优先用户提供的 mmdb（数据始终最新），
+	// 未配置时用内置 chnroute 快照。
+	var geoPrefixes []string
+	if cfg.GeoipDb != "" {
+		r, err := geoip.Open(cfg.GeoipDb)
+		if err != nil {
+			log.Printf("[coreBridge] geoip db %s 不可用（%v），改用内置 chnroute", cfg.GeoipDb, err)
+		} else {
+			prefixes, perr := r.CountryPrefixes([]string{"CN"})
+			r.Close()
+			if perr != nil {
+				log.Printf("[coreBridge] geoip db 遍历失败（%v），改用内置 chnroute", perr)
+			} else {
+				for _, p := range prefixes {
+					if p.IP.To4() != nil {
+						geoPrefixes = append(geoPrefixes, p.String())
+					}
+				}
+				log.Printf("[coreBridge] geoip db %s: %d 条大陆路由", cfg.GeoipDb, len(geoPrefixes))
+			}
+		}
+	}
+
 	serverAddr := transportClient.Config().ServerAddr
-	if err := routeTakeover.Install(b.Name(), ip, serverAddr, splitTunnel); err != nil {
+	if err := routeTakeover.Install(b.Name(), ip, serverAddr, cfg.SplitTunnel, geoPrefixes); err != nil {
 		log.Printf("[coreBridge] 默认路由接管失败（隧道仍可用，可手工添加路由）: %v", err)
 	} else {
-		log.Printf("[coreBridge] 默认路由已接管: 0.0.0.0/1 + 128.0.0.0/1 -> %s，服务器例外 %s（split=%v）", b.Name(), serverAddr, splitTunnel)
+		log.Printf("[coreBridge] 默认路由已接管: 0.0.0.0/1 + 128.0.0.0/1 -> %s，服务器例外 %s（split=%v）", b.Name(), serverAddr, cfg.SplitTunnel)
 	}
 	return nil
 }

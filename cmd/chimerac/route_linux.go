@@ -5,22 +5,21 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 
+	"chimera/geoip"
 	"chimera/internal/netpkt"
 )
-
-//go:embed chnroute_v4.txt
-var chnrouteV4 string
 
 // chnrouteCIDRs parses the embedded APNIC-derived mainland-China CIDR
 // list, skipping comments and blank lines.
 func chnrouteCIDRs() []string {
 	var out []string
-	for _, line := range strings.Split(chnrouteV4, "\n") {
+	for _, line := range strings.Split(chnrouteV4Data, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -28,6 +27,37 @@ func chnrouteCIDRs() []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// cnRouteSource resolves the CN CIDR source: a MaxMind-compatible mmdb
+// when configured (always-current data), else the embedded snapshot.
+// Returns (cidrs, source-description).
+func cnRouteSource(cfg clientConfig, geoipDb string) ([]string, string) {
+	if geoipDb == "" {
+		return chnrouteCIDRs(), "embedded chnroute"
+	}
+	r, err := geoip.Open(geoipDb)
+	if err != nil {
+		log.Printf("geoip db %s unavailable (%v); using embedded chnroute", geoipDb, err)
+		return chnrouteCIDRs(), "embedded chnroute (db fallback)"
+	}
+	defer r.Close()
+	prefixes, err := r.CountryPrefixes([]string{"CN"})
+	if err != nil {
+		log.Printf("geoip db %s iteration failed (%v); using embedded chnroute", geoipDb, err)
+		return chnrouteCIDRs(), "embedded chnroute (db fallback)"
+	}
+	var out []string
+	v6 := 0
+	for _, p := range prefixes {
+		if p.IP.To4() != nil {
+			out = append(out, p.String())
+		} else {
+			v6++
+		}
+	}
+	log.Printf("geoip db %s: %d CN IPv4 prefixes (%d IPv6 skipped)", geoipDb, len(out), v6)
+	return out, geoipDb
 }
 
 type routeSpec struct {
@@ -188,8 +218,9 @@ func (r *linuxRoutes) addBatch(ipv6 bool, specs [][]string) error {
 
 // installCNDirectRoutes pins mainland-China destinations to the physical
 // underlay so domestic traffic bypasses the tunnel even after the
-// half-default takeover. Returns the number of routes installed.
-func (r *linuxRoutes) installCNDirectRoutes(serverAddr string) (int, error) {
+// half-default takeover. cidrs comes from the embedded chnroute snapshot
+// or a user-supplied mmdb. Returns the number of routes installed.
+func (r *linuxRoutes) installCIDRDirectRoutes(cidrs []string, serverAddr string) (int, error) {
 	host := netpkt.HostFromAddr(serverAddr)
 	serverIP, err := netpkt.ResolveIPv4(host)
 	if err != nil {
@@ -199,7 +230,6 @@ func (r *linuxRoutes) installCNDirectRoutes(serverAddr string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	cidrs := chnrouteCIDRs()
 	specs := make([][]string, 0, len(cidrs))
 	for _, c := range cidrs {
 		args := []string{c}

@@ -14,6 +14,7 @@ const defaultLinkLostAfter = 90 * time.Second
 type vpnOptions struct {
 	takeRoute  bool
 	cnDirect   bool
+	geoipDb    string
 	lostAfter  time.Duration
 	statsEvery time.Duration
 }

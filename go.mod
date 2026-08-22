@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/oschwald/maxminddb-golang v1.13.1 // indirect
 	golang.org/x/mobile v0.0.0-20260816165457-f98cc9b3c733 // indirect
 	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

@@ -4,7 +4,6 @@ package bridge
 
 import (
 	"bufio"
-	"embed"
 	"fmt"
 	"log"
 	"net"
@@ -17,14 +16,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-//go:embed chnroute_v4.txt
-var chnrouteV4 string
-
 // chnroutePrefixes parses the embedded APNIC-derived mainland-China CIDR
 // list, skipping comments and blank lines.
 func chnroutePrefixes() []string {
 	var out []string
-	for _, line := range strings.Split(chnrouteV4, "\n") {
+	for _, line := range strings.Split(chnrouteV4Data, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -85,8 +81,10 @@ func enumerateAdapters() ([]adapterInfo, error) {
 // serverAddr the host[:port] of the UDP/TCP endpoint. serverAddr may be
 // empty to install the halves without the server exception (tests /
 // loopback). bypassPrivate additionally pins private/loopback/link-local
-// destinations to the physical adapter for split routing.
-func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate bool) error {
+// destinations to the physical adapter for split routing, and
+// geoPrefixes (when non-empty) are mainland-China CIDRs installed the
+// same way so 国内直连 works alongside the private bypass.
+func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate bool, geoPrefixes []string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.specs) != 0 {
@@ -196,11 +194,15 @@ func (t *RouteTakeover) Install(tunName, tunIP, serverAddr string, bypassPrivate
 		log.Printf("[route] split mode: %d private/local bypass routes -> %s", len(privateBypassRoutes), phys.name)
 
 		// Geo split: mainland-China prefixes stay on the physical adapter
-		// so domestic destinations bypass the tunnel (国内直连). One netsh
-		// batch script instead of thousands of process spawns.
+		// so domestic destinations bypass the tunnel (国内直连). Sources,
+		// in order: caller-supplied mmdb extraction; embedded snapshot.
+		prefixes := geoPrefixes
+		if len(prefixes) == 0 {
+			prefixes = chnroutePrefixes()
+		}
 		start := time.Now()
-		geoSpecs := make([]routeSpec, 0, 6000)
-		for _, p := range chnroutePrefixes() {
+		geoSpecs := make([]routeSpec, 0, len(prefixes))
+		for _, p := range prefixes {
 			geoSpecs = append(geoSpecs, routeSpec{prefix: p, ifIndex: phys.index, ifName: phys.name, nexthop: phys.gateway})
 		}
 		if err := runNetshBatch(geoSpecs); err != nil {

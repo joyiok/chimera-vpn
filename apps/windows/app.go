@@ -32,6 +32,9 @@ type appConfig struct {
 	SplitTunnel   bool          `json:"splitTunnel"`
 	PortHopCount  int           `json:"portHopCount"`
 	PortHopSpread int           `json:"portHopSpread"`
+	// GeoipDb 是 MaxMind 兼容 .mmdb 路径（GeoLite2-Country 或社区
+	// Country.mmdb）。设置后大陆直连路由从库里实时提取；空 = 内置快照。
+	GeoipDb string `json:"geoipDb"`
 	TunIP         string        `json:"tunIP"` // fallback when the server has no client_cidr
 	Servers       []savedServer `json:"servers,omitempty"`
 }
@@ -221,7 +224,7 @@ func (a *ChimeraApp) start(seedHex string, generation uint64, pskHex string, ser
 		log.Printf("[ChimeraApp] 服务器未分配地址（%v），使用回退地址 %s", err, cfg.TunIP)
 		ip = cfg.TunIP
 	}
-	if err := startPacketBridge(ip, cfg.SplitTunnel); err != nil {
+	if err := startPacketBridge(ip, cfg); err != nil {
 		_ = stopTransport()
 		a.setError(err)
 		return err
@@ -349,6 +352,7 @@ func (a *ChimeraApp) Config() (map[string]any, error) {
 		"splitTunnel":   a.cfg.SplitTunnel,
 		"portHopCount":  a.cfg.PortHopCount,
 		"portHopSpread": a.cfg.PortHopSpread,
+		"geoipDb":     a.cfg.GeoipDb,
 		"tunIP":         a.cfg.TunIP,
 		"servers":       a.cfg.Servers,
 	}, nil
